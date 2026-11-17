@@ -12,6 +12,7 @@ import logging
 
 import httpx
 import streamlit as st
+from app.chunk_browser import render_chunk_browser
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,8 @@ st.caption("Hybrid retrieval · Cross-encoder reranking · Corrective RAG · Web
 
 # ── Sidebar — upload ──────────────────────────────────────────────────────────
 with st.sidebar:
+    view = st.radio("界面", ["对话问答", "PDF 分块"], key="view")
+    st.divider()
     st.header("Upload Documents")
     uploaded = st.file_uploader("Choose a PDF", type="pdf")
     if uploaded and st.button("Index Document"):
@@ -55,6 +58,10 @@ with st.sidebar:
                 st.metric(k.replace("_", " ").title(), f"{v:.3f}")
         else:
             st.info(scores["detail"])
+
+if view == "PDF 分块":
+    render_chunk_browser(API_BASE)
+    st.stop()
 
 # ── Chat history ──────────────────────────────────────────────────────────────
 if "messages" not in st.session_state:

@@ -25,43 +25,35 @@ CHUNK_SIZE   = 800
 CHUNK_OVERLAP = 150
 
 
-def load_pdfs(data_dir: Path = DATA_DIR) -> Tuple[List[str], List[Dict[str, Any]]]:
-    """
-    Loads all PDFs from data/ directory.
-    Returns (chunks, metadatas).
-    Each metadata dict: {"source": filename, "page": page_number}
-    """
+def load_pdf_chunks(pdf_path: Path) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """Split one PDF using the same settings as ingestion and chunk previews."""
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
         separators=["\n\n", "\n", ". ", " ", ""],
     )
+    chunks, metadatas = [], []
+    for doc in PyPDFLoader(str(pdf_path)).load():
+        page_num = doc.metadata.get("page", 0) + 1
+        for chunk in splitter.split_text(doc.page_content):
+            if len(chunk.strip()) < 30:
+                continue
+            chunks.append(chunk)
+            metadatas.append({"source": pdf_path.name, "page": page_num})
+    return chunks, metadatas
 
-    all_chunks: List[str]             = []
-    all_metas:  List[Dict[str, Any]]  = []
-    pdf_files   = list(data_dir.glob("*.pdf"))
 
+def load_pdfs(data_dir: Path = DATA_DIR) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """Load every PDF with page/source metadata for the hybrid index."""
+    all_chunks, all_metas = [], []
+    pdf_files = sorted(p for p in data_dir.iterdir() if p.is_file() and p.suffix.lower() == ".pdf") if data_dir.exists() else []
     if not pdf_files:
         logger.warning(f"No PDFs found in {data_dir}. Add files and re-run.")
-        return [], []
-
     for pdf_path in pdf_files:
         logger.info(f"Loading: {pdf_path.name}")
-        loader    = PyPDFLoader(str(pdf_path))
-        documents = loader.load()
-
-        for doc in documents:
-            page_num = doc.metadata.get("page", 0)
-            chunks   = splitter.split_text(doc.page_content)
-            for chunk in chunks:
-                if len(chunk.strip()) < 30:   # skip very short fragments
-                    continue
-                all_chunks.append(chunk)
-                all_metas.append({
-                    "source": pdf_path.name,
-                    "page":   page_num + 1,   # 1-indexed for display
-                })
-
+        chunks, metas = load_pdf_chunks(pdf_path)
+        all_chunks.extend(chunks)
+        all_metas.extend(metas)
     logger.success(f"Loaded {len(all_chunks)} chunks from {len(pdf_files)} PDF(s)")
     return all_chunks, all_metas
 

@@ -242,6 +242,25 @@ Open [http://localhost:8501](http://localhost:8501) in your browser.
 
 ## 📡 API Reference
 
+### PDF chunk browser
+
+In the Streamlit sidebar, switch **界面 → PDF 分块** to inspect documents.
+Choose an uploaded PDF to see the exact text chunks stored in the current index,
+including chunk number, source page and full text. Filter by page or keyword and
+browse ten chunks per results page. Switching views preserves the chat history.
+
+Use **本地 PDF 预览** to upload any PDF and preview its chunks without indexing it.
+Preview and ingestion share the same splitter (800 characters with up to 150
+characters of overlap; fragments shorter than 30 characters are skipped).
+Preview does not run embeddings or call DeepSeek. Image-only PDFs require OCR,
+which is not currently configured.
+
+The browser uses these endpoints:
+
+- `GET /documents`: list available PDFs and indexed chunk counts.
+- `GET /documents/chunks?filename=example.pdf`: get indexed chunks, or preview a PDF that has not been indexed.
+- `POST /documents/preview`: multipart PDF upload for a temporary preview; does not add the PDF to the library or modify the index.
+
 ### `GET /health`
 Liveness probe. Returns `{"status": "ok"}`.
 

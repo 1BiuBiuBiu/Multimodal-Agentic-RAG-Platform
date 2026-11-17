@@ -38,6 +38,7 @@ from ragas.metrics import (
 from app.agent import ask
 from app.llm import create_llm
 from embeddings.embedder import EMBED_MODEL
+from evaluation.eval_data import EVAL_DATASET
 
 load_dotenv()
 
@@ -53,28 +54,28 @@ for _metric in (faithfulness, answer_relevancy, context_precision, context_recal
 
 # ── Replace/extend with questions about YOUR actual documents ──────────────
 # ground_truth: the ideal answer (used for context_recall only)
-EVAL_DATASET = [
-    {
-        "question":     "What is the main topic of the document?",
-        "ground_truth": "The document covers the primary subject matter in detail.",
-    },
-    {
-        "question":     "What are the key findings or conclusions?",
-        "ground_truth": "The key findings are summarised in the conclusion section.",
-    },
-    {
-        "question":     "What methodology was used?",
-        "ground_truth": "The methodology section describes the approach taken.",
-    },
-    {
-        "question":     "Who are the main authors or contributors?",
-        "ground_truth": "The authors are listed on the title page.",
-    },
-    {
-        "question":     "What recommendations are made?",
-        "ground_truth": "Recommendations are provided in the final section.",
-    },
-]
+# EVAL_DATASET = [
+#     {
+#         "question":     "What is the main topic of the document?",
+#         "ground_truth": "The document covers the primary subject matter in detail.",
+#     },
+#     {
+#         "question":     "What are the key findings or conclusions?",
+#         "ground_truth": "The key findings are summarised in the conclusion section.",
+#     },
+#     {
+#         "question":     "What methodology was used?",
+#         "ground_truth": "The methodology section describes the approach taken.",
+#     },
+#     {
+#         "question":     "Who are the main authors or contributors?",
+#         "ground_truth": "The authors are listed on the title page.",
+#     },
+#     {
+#         "question":     "What recommendations are made?",
+#         "ground_truth": "Recommendations are provided in the final section.",
+#     },
+# ]
 
 
 def run_evaluation() -> dict:

@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from app.agent import ask, astream_answer
 from ingestion.ingest import load_pdfs
 from vectorstore.store import build_index
+from app.documents import router as documents_router
 
 
 # ── App setup ────────────────────────────────────────────────────────────────
@@ -53,6 +54,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(documents_router)
 
 DATA_DIR    = Path("data")
 METRICS_FILE = Path("evaluation/latest_scores.json")
