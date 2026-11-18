@@ -34,7 +34,7 @@ class StreamApiTests(unittest.IsolatedAsyncioTestCase):
             {"role": "user", "content": "Previous question"},
             {"role": "assistant", "content": "Previous answer"},
         ])
-        with patch.object(agent, "llm", model), patch.object(agent, "hybrid_search", return_value=[source]):
+        with patch.object(agent, "llm", model), patch.object(agent, "retrieve_documents", return_value={"sources": [source], "queries": ["test"], "retrieval_query": "test", "snapshot_id": "test"}):
             response = await api.query_stream(request)
             self.assertEqual(response.media_type, "text/event-stream")
             events = []
@@ -59,7 +59,7 @@ class StreamApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_missing_index_becomes_error_event(self):
         model = Mock()
         model.invoke.return_value = AIMessage(content="documents")
-        with patch.object(agent, "llm", model), patch.object(agent, "hybrid_search", side_effect=FileNotFoundError):
+        with patch.object(agent, "llm", model), patch.object(agent, "retrieve_documents", side_effect=FileNotFoundError):
             response = await api.query_stream(api.QueryRequest(question="Look up document"))
             events = [payload(raw) async for raw in response.body_iterator]
         self.assertEqual(events[-1]["type"], "error")
@@ -98,6 +98,7 @@ class StreamUiTests(unittest.TestCase):
         self.assertFalse(ui.exception, str(ui.exception))
         self.assertTrue(stream.call_args.args[1].endswith("/query/stream"))
         self.assertFalse(stream.call_args.kwargs["trust_env"])
+        self.assertNotIn("num_queries",stream.call_args.kwargs["json"]["config"])
         return ui
 
     def test_completed_stream_saves_answer_and_sources(self):

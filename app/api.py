@@ -21,19 +21,21 @@ import asyncio
 from contextlib import suppress
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Any
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, AIMessage
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from app.pipeline_config import PipelineConfig
 
 from app.agent import ask, astream_answer
 from ingestion.ingest import load_pdfs
 from vectorstore.store import build_index
 from app.documents import router as documents_router
+from app.experiment_api import router as experiment_router
 
 
 # ── App setup ────────────────────────────────────────────────────────────────
@@ -55,6 +57,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(documents_router)
+app.include_router(experiment_router)
 
 DATA_DIR    = Path("data")
 METRICS_FILE = Path("evaluation/latest_scores.json")
@@ -66,12 +69,17 @@ DATA_DIR.mkdir(exist_ok=True)
 class QueryRequest(BaseModel):
     question:   str
     history:    Optional[List[dict]] = None   # [{"role": "user"|"assistant", "content": "..."}]
+    config: PipelineConfig = Field(default_factory=PipelineConfig)
 
 
 class SourceItem(BaseModel):
     text:   str
     source: str
     page:   int
+    chunk_id: Optional[str] = None
+    type: Optional[str] = "text"
+    asset_images: Optional[List[str]] = None
+    caption: Optional[Any] = None
 
 
 class QueryResponse(BaseModel):
@@ -80,6 +88,15 @@ class QueryResponse(BaseModel):
     rewrite_count: int
     used_web:      bool
     latency_ms:    int
+    retrieval_trace: list = Field(default_factory=list)
+    pipeline_config: dict = Field(default_factory=dict)
+    web_contexts: list[str] = Field(default_factory=list)
+    degradation_warnings: List[str] = Field(default_factory=list)
+    decision_trace: list = Field(default_factory=list)
+    token_usage: dict = Field(default_factory=dict)
+    total_tokens: int = 0
+    query_doc_history: list = Field(default_factory=list)
+    original_query: Optional[str] = ""
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -138,7 +155,7 @@ def query(req: QueryRequest):
     """
     t0 = time.time()
     try:
-        result = ask(req.question, history=_history(req))
+        result = ask(req.question, history=_history(req), config=req.config)
     except FileNotFoundError:
         raise HTTPException(
             status_code=404,
@@ -157,6 +174,15 @@ def query(req: QueryRequest):
         rewrite_count = result["rewrite_count"],
         used_web      = result["used_web"],
         latency_ms    = latency,
+        retrieval_trace = result.get("retrieval_trace", []),
+        pipeline_config = result.get("pipeline_config", {}),
+        web_contexts = result.get("web_contexts", []),
+        degradation_warnings = result.get("degradation_warnings", []),
+        decision_trace = result.get("decision_trace", []),
+        token_usage = result.get("token_usage", {}),
+        total_tokens = result.get("total_tokens", 0),
+        query_doc_history = result.get("query_doc_history", []),
+        original_query = result.get("original_query", req.question),
     )
 
 
@@ -165,7 +191,7 @@ async def query_stream(req: QueryRequest):
     """SSE: status/token events, then done with sources and performance metadata."""
     async def events():
         started = time.perf_counter()
-        source = astream_answer(req.question, history=_history(req))
+        source = astream_answer(req.question, history=_history(req), config=req.config)
         pending = None
         try:
             while True:

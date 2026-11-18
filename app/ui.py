@@ -3,6 +3,7 @@
 import streamlit as st
 
 from app.llm import create_llm
+from langchain_core.messages import SystemMessage, HumanMessage
 
 st.set_page_config(page_title="DeepSeek Chat", layout="centered")
 st.title("🧠 DeepSeek Chat")
@@ -13,7 +14,10 @@ if question:
     try:
         st.subheader("🤖 Answer")
         st.write_stream(
-            chunk.content for chunk in create_llm().stream(question)
+            chunk.content for chunk in create_llm().stream([
+                SystemMessage(content="Always answer in Simplified Chinese."),
+                HumanMessage(content=question),
+            ])
             if isinstance(chunk.content, str) and chunk.content
         )
     except ValueError as exc:

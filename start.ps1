@@ -6,6 +6,30 @@ $pythonPath = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $pythonPath)) {
     throw "Missing .venv. Run: python -m venv .venv; .\.venv\Scripts\python.exe -m pip install -r requirements.txt"
 }
+
+# Verify venv python can load core DLLs; fallback to base Python if Windows stub DLL issue occurs
+$venvWorks = $false
+try {
+    $proc = Start-Process -FilePath $pythonPath -ArgumentList @("-c", "import ssl") -PassThru -WindowStyle Hidden -Wait
+    if ($proc.ExitCode -eq 0) {
+        $venvWorks = $true
+    }
+} catch { }
+
+if (-not $venvWorks) {
+    $globalPy = "C:\Users\33983\AppData\Local\Programs\Python\Python312\python.exe"
+    if (Test-Path -LiteralPath $globalPy) {
+        $pythonPath = $globalPy
+        $sitePackages = Join-Path $PSScriptRoot ".venv\Lib\site-packages"
+        if ($env:PYTHONPATH) {
+            $env:PYTHONPATH = "$sitePackages;$PSScriptRoot;$env:PYTHONPATH"
+        } else {
+            $env:PYTHONPATH = "$sitePackages;$PSScriptRoot"
+        }
+        Write-Host "Using base Python with virtual environment libraries: $pythonPath"
+    }
+}
+
 if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot ".env"))) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot ".env.example") -Destination (Join-Path $PSScriptRoot ".env")
     throw "Created .env. Set your DEEPSEEK_API_KEY there and run this script again."

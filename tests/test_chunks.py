@@ -1,5 +1,7 @@
 """Chunk browsing uses saved index content or the shared PDF splitter."""
 import pickle
+import base64
+from io import BytesIO
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,11 +11,19 @@ from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
 from streamlit.testing.v1 import AppTest
+from PIL import Image
 
 from app.api import app
 from app import documents
 from app.chunk_browser import _load_chunks
 from ingestion.ingest import load_pdf_chunks
+from ingestion.mineru_parser import normalize_content, MinerUError, MinerUUnavailable
+
+
+def png_bytes():
+    output = BytesIO()
+    Image.new('RGB',(8,8),'blue').save(output,format='PNG')
+    return output.getvalue()
 
 
 def create_pdf(path):
@@ -45,6 +55,13 @@ class ChunkApiTests(unittest.TestCase):
             self.addCleanup(ctx.stop)
         self.client = TestClient(app)
         create_pdf(self.data / 'sample.pdf')
+        parser = patch('ingestion.ingest.parse_pdf', return_value=normalize_content([
+            {'type': 'text', 'text': 'Chapter one', 'text_level': 1, 'page_idx': 0},
+            {'type': 'text', 'text': 'Page one describes chunk browsing. ' * 45, 'page_idx': 0},
+            {'type': 'text', 'text': 'Page two explains document filtering. ' * 45, 'page_idx': 1},
+        ]))
+        self.parser = parser.start()
+        self.addCleanup(parser.stop)
 
     def test_saved_chunks_match_actual_index_without_parsing_pdf(self):
         texts = ['Exact indexed block one', 'Exact indexed block two']
@@ -85,9 +102,87 @@ class ChunkApiTests(unittest.TestCase):
         for filename in ['../secret.pdf', '..\\secret.pdf', 'C:secret.pdf']:
             self.assertEqual(self.client.get('/documents/chunks', params={'filename': filename}).status_code, 400)
         self.assertEqual(self.client.get('/documents/chunks', params={'filename': 'missing.pdf'}).status_code, 404)
-        with patch.object(documents.logger, 'exception'):
+        with patch.object(documents.logger, 'exception'), patch('ingestion.ingest.parse_pdf', side_effect=MinerUError('Bad PDF')):
             response = self.client.post('/documents/preview', files={'file': ('bad.pdf', b'not a PDF', 'application/pdf')})
         self.assertEqual(response.status_code, 422)
+
+    def test_missing_mineru_reports_installation_error(self):
+        self.parser.side_effect = MinerUUnavailable('Install MinerU')
+        response = self.client.get('/documents/chunks', params={'filename': 'sample.pdf'})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()['detail'], 'Install MinerU')
+
+    def test_table_metadata_survives_preview_and_saved_index(self):
+        parsed = normalize_content([
+            {'type': 'text', 'text': 'Results', 'text_level': 1, 'page_idx': 1},
+            {'type': 'table', 'table_body': '<table>' + 'cell' * 300 + '</table>',
+             'table_caption': ['Table 1'], 'table_footnote': ['Footnote'], 'page_idx': 1},
+        ])
+        self.parser.return_value = parsed
+        texts, metas = load_pdf_chunks(self.data / 'sample.pdf')
+        for stored in (False, True):
+            if stored:
+                self.meta.write_bytes(pickle.dumps({'chunks': texts, 'metadatas': metas}))
+            result = self.client.get('/documents/chunks', params={'filename': 'sample.pdf'}).json()
+            table = next(c for c in result['chunks'] if c['type'] == 'table')
+            self.assertGreater(table['char_count'], 800)
+            self.assertEqual(table['caption'], ['Table 1'])
+            self.assertEqual(table['section'], 'Results')
+            self.assertEqual(table['page'], 2)
+
+    def test_indexed_images_are_previewed_without_becoming_chunks_or_running_ocr(self):
+        root = self.base/'assets'
+        root.mkdir()
+        (root/'figure.png').write_bytes(png_bytes())
+        parsed = normalize_content([{'type':'image','page_idx':1,'img_path':'figure.png',
+            'image_caption':['Figure 1: Results'],'image_footnote':['Note'],
+            'bbox':[100,100,800,500]}])
+        parsed['artifact_dir'] = str(root)
+        self.meta.write_bytes(pickle.dumps({'chunks':['Indexed text'],
+            'metadatas':[{'source':'sample.pdf','page':1}]}))
+        with patch.object(documents,'read_cached_pdf',return_value=parsed), \
+                patch.object(documents,'_parse_pdf',side_effect=AssertionError('No OCR for saved index')):
+            response = self.client.get('/documents/chunks',params={'filename':'sample.pdf'})
+        self.assertEqual(response.status_code,200)
+        data = response.json()
+        self.assertEqual(data['total_chunks'],1)
+        self.assertEqual(data['total_images'],1)
+        self.assertFalse(data['images'][0]['indexed'])
+        self.assertEqual(data['images'][0]['caption'],['Figure 1: Results'])
+        encoded = data['images'][0]['asset_images'][0]
+        self.assertEqual(base64.b64decode(encoded.split(',',1)[1]),png_bytes())
+        self.assertNotIn(str(root),response.text)
+
+    def test_temporary_image_preview_survives_upload_cleanup(self):
+        folders = []
+
+        def cache(path):
+            root = path.parent/'assets'
+            root.mkdir()
+            (root/'figure.png').write_bytes(png_bytes())
+            folders.append(root)
+            return {'artifact_dir':str(root),'images':[{'type':'image','page':1,
+                'img_path':'figure.png','caption':['Figure 1'],'footnote':[]}]}
+
+        with patch.object(documents,'read_cached_pdf',side_effect=cache):
+            response = self.client.post('/documents/preview',files={
+                'file':('another.pdf',(self.data/'sample.pdf').read_bytes(),'application/pdf')})
+        self.assertEqual(response.status_code,200)
+        self.assertFalse(folders[0].exists())
+        self.assertTrue(response.json()['images'][0]['asset_images'][0].startswith('data:image/png;base64,'))
+        self.assertFalse(self.meta.exists())
+
+    def test_original_table_parts_and_asset_path_boundaries(self):
+        root = self.base/'assets'
+        root.mkdir()
+        for name in ['left.png','right.png']:
+            (root/name).write_bytes(png_bytes())
+        (self.base/'secret.png').write_bytes(b'private')
+        meta = {'source':'sample.pdf','page':1,'type':'table','artifact_dir':str(root),
+                'img_paths':['left.png','right.png','../secret.png']}
+        result = documents._chunk_response('sample.pdf',['<table>data</table>'],[meta],indexed=True)
+        self.assertEqual(len(result['chunks'][0]['asset_images']),2)
+        self.assertNotIn('artifact_dir',result['chunks'][0])
 
 
 class ChunkUiTests(unittest.TestCase):
@@ -136,6 +231,92 @@ class ChunkUiTests(unittest.TestCase):
             ui.radio(key='view').set_value('PDF 分块').run()
         self.assertFalse(ui.exception, str(ui.exception))
         self.assertTrue(any('暂无 PDF' in item.value for item in ui.info))
+
+    def test_cross_page_chunk_matches_every_covered_page(self):
+        self.result['chunks'][9]['page_end'] = 2
+        with patch('httpx.get',side_effect=self.fake_get):
+            ui = AppTest.from_file('app/main.py',default_timeout=20).run()
+            ui.radio(key='view').set_value('PDF 分块').run()
+            ui.selectbox[1].set_value(2).run()
+        self.assertFalse(ui.exception,str(ui.exception))
+        self.assertEqual(len(ui.expander),3)
+        self.assertIn('Full block 10 text',[text.value for text in ui.text])
+
+    def test_parent_section_and_image_only_filter(self):
+        for chunk in self.result['chunks']:
+            chunk['section_path'] = ['Results','Details']
+            chunk['section'] = 'Results / Details'
+        self.result['images'] = [{'id':1,'type':'image','page':2,'char_count':15,
+            'text':'Figure 1: Results','caption':['Figure 1: Results'],'footnote':[],
+            'section':'Results / Details','section_path':['Results','Details'],
+            'asset_images':['data:image/png;base64,'+base64.b64encode(png_bytes()).decode()]}]
+        with patch('httpx.get',side_effect=self.fake_get):
+            ui = AppTest.from_file('app/main.py',default_timeout=20).run()
+            ui.radio(key='view').set_value('PDF 分块').run()
+            ui.number_input(key='chunk_page').set_value(2).run()
+            ui.selectbox(key='chunk_section').set_value('Results').run()
+            ui.multiselect(key='chunk_types').set_value(['图片']).run()
+            self.assertFalse(ui.exception,str(ui.exception))
+            self.assertEqual(len(ui.expander),1)
+            self.assertEqual(len(ui.get('imgs')),1)
+            self.assertIn('Caption：Figure 1: Results',[t.value for t in ui.text])
+            self.assertEqual(ui.number_input(key='chunk_page').value,1)
+
+    def test_table_only_view_and_empty_type_selection(self):
+        chunk = self.result['chunks'][3]
+        chunk.update(type='table',section='Methods / Data',section_path=['Methods','Data'],
+            text='Table 1: Scores\n<table><tr><td>Score</td><td>42</td></tr></table>',
+            caption=['Table 1: Scores'])
+        with patch('httpx.get',side_effect=self.fake_get):
+            ui = AppTest.from_file('app/main.py',default_timeout=20).run()
+            ui.radio(key='view').set_value('PDF 分块').run()
+            ui.selectbox(key='chunk_section').set_value('Methods').run()
+            ui.multiselect(key='chunk_types').set_value(['表格']).run()
+            self.assertFalse(ui.exception,str(ui.exception))
+            self.assertEqual(len(ui.expander),1)
+            self.assertEqual(len(ui.get('html')),1)
+            self.assertIn('Caption：Table 1: Scores',[t.value for t in ui.text])
+            ui.multiselect(key='chunk_types').set_value([]).run()
+            self.assertEqual(len(ui.expander),0)
+            self.assertTrue(any('没有匹配的内容' in t.value for t in ui.info))
+
+    def test_body_chapter_click_clears_hidden_filters_and_locates_first_chunk(self):
+        for chunk in self.result['chunks']:
+            path = ['Introduction'] if chunk['id'] <= 10 else ['Results','Details']
+            chunk.update(section_path=path,section=' / '.join(path))
+        with patch('httpx.get',side_effect=self.fake_get):
+            ui = AppTest.from_file('app/main.py',default_timeout=20).run()
+            ui.radio(key='view').set_value('PDF 分块').run()
+            ui.multiselect(key='chunk_types').set_value(['正文']).run()
+            ui.number_input(key='chunk_page').set_value(2).run()
+            ui.selectbox(key='chunk_source_page').set_value(1).run()
+            ui.text_input(key='chunk_keyword').set_value('no matching text').run()
+            self.assertEqual(len(ui.expander),0)
+            button = next(b for b in ui.button if b.label.startswith('Results ·'))
+            button.click().run()
+            self.assertFalse(ui.exception,str(ui.exception))
+            self.assertEqual(ui.selectbox(key='chunk_section').value,'Results')
+            self.assertEqual(ui.selectbox(key='chunk_source_page').value,'全部页码')
+            self.assertEqual(ui.text_input(key='chunk_keyword').value,'')
+            self.assertEqual(ui.number_input(key='chunk_page').value,1)
+            self.assertEqual(len(ui.expander),2)
+            self.assertTrue(ui.expander[0].label.startswith('📍 块 11'))
+            self.assertIn('Full block 11 text',[t.value for t in ui.text])
+            self.assertTrue(any(b.label.lstrip('　').startswith('Details ·') for b in ui.button))
+            ui.selectbox[0].set_value('second.pdf').run()
+            self.assertEqual(ui.selectbox(key='chunk_section').value,'全部章节')
+            self.assertFalse(any(e.label.startswith('📍') for e in ui.expander))
+
+    def test_body_outline_is_shown_whenever_body_type_is_selected(self):
+        with patch('httpx.get',side_effect=self.fake_get):
+            ui = AppTest.from_file('app/main.py',default_timeout=20).run()
+            ui.radio(key='view').set_value('PDF 分块').run()
+            self.assertIn('正文章节导航',[h.value for h in ui.subheader])
+            ui.multiselect(key='chunk_types').set_value(['表格']).run()
+            self.assertNotIn('正文章节导航',[h.value for h in ui.subheader])
+            ui.multiselect(key='chunk_types').set_value(['正文','图片']).run()
+            self.assertIn('正文章节导航',[h.value for h in ui.subheader])
+            self.assertFalse(ui.exception,str(ui.exception))
 
 
 if __name__ == '__main__':

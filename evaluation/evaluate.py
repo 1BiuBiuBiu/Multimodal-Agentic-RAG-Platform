@@ -27,7 +27,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from ragas.embeddings import LangchainEmbeddingsWrapper
 from loguru import logger
 from ragas import evaluate
-from ragas.llms import LangchainLLMWrapper
+from evaluation.judge import DeepSeekJudge
 from ragas.metrics import (
     faithfulness,
     answer_relevancy,
@@ -46,7 +46,7 @@ SCORES_FILE = Path("evaluation/latest_scores.json")
 SCORES_FILE.parent.mkdir(exist_ok=True)
 
 # ── Use DeepSeek as the RAGAs judge LLM ─────────────────────────────────
-RAGAS_LLM = LangchainLLMWrapper(create_llm(temperature=0))
+RAGAS_LLM = DeepSeekJudge(create_llm(temperature=0))
 
 # Apply the LLM to metrics that need a judge
 for _metric in (faithfulness, answer_relevancy, context_precision, context_recall):
@@ -78,23 +78,43 @@ for _metric in (faithfulness, answer_relevancy, context_precision, context_recal
 # ]
 
 
-def run_evaluation() -> dict:
-    logger.info(f"Running RAGAs evaluation on {len(EVAL_DATASET)} questions …")
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    questions, answers, contexts, ground_truths = [], [], [], []
+def run_evaluation(concurrency: int = 4) -> dict:
+    logger.info(f"Running RAGAs evaluation on {len(EVAL_DATASET)} questions (concurrency={concurrency}) …")
 
-    for item in EVAL_DATASET:
-        q  = item["question"]
+    ordered_results = [None] * len(EVAL_DATASET)
+
+    def _eval_one(idx_item):
+        idx, item = idx_item
+        q = item["question"]
         gt = item["ground_truth"]
-
-        result    = ask(q)
-        answer    = result["answer"]
+        result = ask(q)
+        answer = result["answer"]
         ctx_texts = [c["text"] for c in result["sources"]]
+        trace = result.get("retrieval_trace", [])
+        retrieval_count = len(trace) if trace else (result.get("rewrite_count", 0) + 1)
+        return idx, {
+            "question": q,
+            "answer": answer,
+            "contexts": ctx_texts if ctx_texts else ["No context retrieved."],
+            "ground_truth": gt,
+            "retrieval_count": retrieval_count,
+        }
 
-        questions.append(q)
-        answers.append(answer)
-        contexts.append(ctx_texts if ctx_texts else ["No context retrieved."])
-        ground_truths.append(gt)
+    max_workers = min(concurrency, len(EVAL_DATASET)) if EVAL_DATASET else 1
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="eval-runner") as executor:
+        futures = [executor.submit(_eval_one, (i, item)) for i, item in enumerate(EVAL_DATASET)]
+        for fut in as_completed(futures):
+            idx, res = fut.result()
+            ordered_results[idx] = res
+
+    questions = [r["question"] for r in ordered_results]
+    answers = [r["answer"] for r in ordered_results]
+    contexts = [r["contexts"] for r in ordered_results]
+    ground_truths = [r["ground_truth"] for r in ordered_results]
+    retrieval_counts = [r["retrieval_count"] for r in ordered_results]
+    avg_retrieval_count = round(sum(retrieval_counts) / len(retrieval_counts), 2) if retrieval_counts else 1.0
 
     dataset = Dataset.from_dict({
         "question":     questions,
@@ -124,13 +144,17 @@ def run_evaluation() -> dict:
     metric_names = ["faithfulness", "answer_relevancy", "context_precision", "context_recall"]
     means = result.to_pandas()[metric_names].mean()
     scores = {k: round(float(v), 4) for k, v in means.items()}
+    scores["avg_retrieval_count"] = avg_retrieval_count
     SCORES_FILE.write_text(json.dumps(scores, indent=2))
     logger.success(f"Scores saved to {SCORES_FILE}")
 
     print("\n── RAGAs Evaluation Results ─────────────────────")
     for metric, score in scores.items():
-        bar = "█" * int(score * 20)
-        print(f"  {metric:<25} {score:.4f}  {bar}")
+        if metric == "avg_retrieval_count":
+            print(f"  {metric:<25} {score:.2f} 次 (平均检索次数)")
+        else:
+            bar = "█" * int(score * 20)
+            print(f"  {metric:<25} {score:.4f}  {bar}")
     print("─────────────────────────────────────────────────\n")
 
     return scores

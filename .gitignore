@@ -21,6 +21,8 @@ vectorstore/index/
 
 # Virtual environment
 .venv/
+.venv-mineru/
+.mineru/
 venv/
 data/*.pdf
 
@@ -31,3 +33,8 @@ data/*.pdf
 data/
 
 *.faiss
+
+# Local experiment configurations, results and private evaluation exports
+evaluation/runs/
+evaluation/variants.json
+evaluation/latest_scores.json

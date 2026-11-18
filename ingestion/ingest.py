@@ -9,38 +9,35 @@ Drop your PDFs in the  data/  folder and call:
 """
 
 from __future__ import annotations
-import os
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
-from langchain_community.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from loguru import logger
+
+from ingestion.mineru_parser import parse_pdf
+from ingestion.chunking import chunk_document
 
 from vectorstore.store import build_index
 
 
-DATA_DIR     = Path("data")
-CHUNK_SIZE   = 800
-CHUNK_OVERLAP = 150
+DATA_DIR       = Path("data")
+CHUNK_SIZE     = 800
+CHUNK_OVERLAP  = 140
+MIN_CHUNK_SIZE = 250
+MAX_CHUNK_SIZE = 1000
 
 
 def load_pdf_chunks(pdf_path: Path) -> Tuple[List[str], List[Dict[str, Any]]]:
-    """Split one PDF using the same settings as ingestion and chunk previews."""
-    splitter = RecursiveCharacterTextSplitter(
+    """Parse with MinerU; split body hierarchically with intra-paragraph sentence overlap and keep each table atomic."""
+    pdf_path = Path(pdf_path)
+    return chunk_document(
+        parse_pdf(pdf_path),
+        pdf_path.name,
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
-        separators=["\n\n", "\n", ". ", " ", ""],
+        min_chunk_size=MIN_CHUNK_SIZE,
+        max_chunk_size=MAX_CHUNK_SIZE,
     )
-    chunks, metadatas = [], []
-    for doc in PyPDFLoader(str(pdf_path)).load():
-        page_num = doc.metadata.get("page", 0) + 1
-        for chunk in splitter.split_text(doc.page_content):
-            if len(chunk.strip()) < 30:
-                continue
-            chunks.append(chunk)
-            metadatas.append({"source": pdf_path.name, "page": page_num})
-    return chunks, metadatas
 
 
 def load_pdfs(data_dir: Path = DATA_DIR) -> Tuple[List[str], List[Dict[str, Any]]]:

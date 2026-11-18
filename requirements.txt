@@ -15,6 +15,7 @@ rank_bm25==0.2.2                    # hybrid BM25 search
 
 # ── Document Loading ─────────────────────────────────────────
 pypdf==5.4.0
+pdfminer.six==20250506              # native symbol verification inside MinerU table regions
 unstructured==0.17.2
 
 # ── API Layer ────────────────────────────────────────────────

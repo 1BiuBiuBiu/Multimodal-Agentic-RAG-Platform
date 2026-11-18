@@ -97,7 +97,10 @@ class DeepSeekTests(unittest.TestCase):
                     sys.modules.pop("app.agent", None)
                     try:
                         agent = importlib.import_module("app.agent")
-                        result = agent.ask("What API does guide.pdf use?")
+                        with patch.object(agent, "retrieve_documents", return_value={
+                            "sources": [chunk], "queries": ["test"], "retrieval_query": "test", "snapshot_id": "test",
+                        }):
+                            result = agent.ask("What API does guide.pdf use?")
                     finally:
                         sys.modules.pop("app.agent", None)
         self.assertEqual(result["sources"], [chunk])

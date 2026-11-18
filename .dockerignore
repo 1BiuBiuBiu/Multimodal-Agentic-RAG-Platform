@@ -8,3 +8,6 @@ venv/
 data/
 vectorstore/index/
 *.faiss
+evaluation/runs/
+evaluation/variants.json
+evaluation/latest_scores.json
