@@ -151,13 +151,16 @@ def embed_multimodal_chunks(
         img_path = resolve_image_path(meta) if is_image else None
 
         if is_image:
-            if img_path is None or not img_path.is_file():
-                raise FileNotFoundError(
-                    f"Multimodal indexing failed: Chunk metadata specifies type='image' "
-                    f"but physical image file could not be resolved: {meta}"
+            if img_path is not None and img_path.is_file():
+                caption = text
+                results[i] = visual_embedder.encode_image_with_caption(img_path, caption)
+            else:
+                logger.warning(
+                    f"Multimodal chunk specifies type='image' but physical image file could not be resolved. "
+                    f"Falling back to text/caption embedding: {meta.get('chunk_id')}"
                 )
-            caption = text
-            results[i] = visual_embedder.encode_image_with_caption(img_path, caption)
+                text_indices.append(i)
+                text_contents.append(text)
         else:
             text_indices.append(i)
             text_contents.append(text)

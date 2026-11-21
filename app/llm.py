@@ -9,7 +9,7 @@ from langchain_openai import ChatOpenAI
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
-def create_llm(*, temperature: float = 0.1) -> ChatOpenAI:
+def create_llm(*, temperature: float = 0.1, timeout: int = 600, max_retries: int = 2) -> ChatOpenAI:
     """Use DeepSeek's OpenAI-compatible endpoint with explicit credentials."""
     api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if not api_key or api_key == "your-deepseek-api-key":
@@ -22,6 +22,7 @@ def create_llm(*, temperature: float = 0.1) -> ChatOpenAI:
         base_url=os.getenv("DEEPSEEK_BASE_URL", "").strip() or "https://api.deepseek.com",
         model=os.getenv("DEEPSEEK_MODEL", "").strip() or "deepseek-flash",
         temperature=temperature,
-        timeout=60,
-        max_retries=2,
+        timeout=timeout,
+        max_retries=max_retries,
+        stream_usage=True,
     )

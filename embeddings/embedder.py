@@ -44,36 +44,36 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
     """Embed a list of strings → list of float vectors."""
     if not texts:
         return []
-    with MODEL_LOCK:
-        model = get_embedder()
-        # Whole tables can be thousands of tokens long. Bound padded batch
-        # size, rather than padding 32 short body chunks to one huge table.
-        lengths = model.tokenizer(texts, padding=False, truncation=False,
-                                  return_length=True)['length']
-        batch_limit = max(1, int(os.getenv('EMBED_BATCH_SIZE', '8')))
-        token_limit = max(1, int(os.getenv('EMBED_BATCH_TOKEN_LIMIT', '4096')))
-        vectors = [None] * len(texts)
-        batch = []
-        completed = 0
+    model = get_embedder()
+    # Whole tables can be thousands of tokens long. Bound padded batch
+    # size, rather than padding 32 short body chunks to one huge table.
+    lengths = model.tokenizer(texts, padding=False, truncation=False,
+                              return_length=True)['length']
+    batch_limit = max(1, int(os.getenv('EMBED_BATCH_SIZE', '8')))
+    token_limit = max(1, int(os.getenv('EMBED_BATCH_TOKEN_LIMIT', '4096')))
+    vectors = [None] * len(texts)
+    batch = []
+    completed = 0
 
-        def encode_batch():
-            nonlocal completed
+    def encode_batch():
+        nonlocal completed
+        with MODEL_LOCK:
             result = model.encode([texts[i] for i in batch], batch_size=len(batch),
                                   normalize_embeddings=True, show_progress_bar=False)
-            for index, vector in zip(batch, result):
-                vectors[index] = vector.tolist()
-            previous = completed
-            completed += len(batch)
-            if len(texts) >= 100 and (completed == len(texts) or completed//100 != previous//100):
-                logger.info(f"Embedded {completed}/{len(texts)} chunks")
+        for index, vector in zip(batch, result):
+            vectors[index] = vector.tolist()
+        previous = completed
+        completed += len(batch)
+        if len(texts) >= 100 and (completed == len(texts) or completed//100 != previous//100):
+            logger.info(f"Embedded {completed}/{len(texts)} chunks")
 
-        for index in sorted(range(len(texts)), key=lambda i: lengths[i], reverse=True):
-            if batch and (len(batch) >= batch_limit or lengths[batch[0]] * (len(batch)+1) > token_limit):
-                encode_batch()
-                batch.clear()
-            batch.append(index)
-        if batch:
+    for index in sorted(range(len(texts)), key=lambda i: lengths[i], reverse=True):
+        if batch and (len(batch) >= batch_limit or lengths[batch[0]] * (len(batch)+1) > token_limit):
             encode_batch()
+            batch.clear()
+        batch.append(index)
+    if batch:
+        encode_batch()
     return vectors
 
 

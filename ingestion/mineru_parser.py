@@ -239,16 +239,65 @@ def _settings() -> dict:
             "source": os.getenv("MINERU_MODEL_SOURCE", "huggingface")}
 
 
-def _executable() -> str:
+def _resolve_mineru_command_and_env() -> tuple[list[str], dict[str, str]]:
+    """
+    Resolve MinerU CLI execution command and clean environment.
+    Avoids Windows venv stub launcher DLL load failures (ImportError: DLL load failed while importing _ctypes)
+    and PYTHONPATH leakage between virtualenvs.
+    """
     configured = os.getenv("MINERU_EXECUTABLE")
-    if configured:
-        return configured
+    repo_root = Path(__file__).resolve().parent.parent
+    mineru_venv = repo_root / ".venv-mineru"
+
+    clean_env = os.environ.copy()
+    clean_env.pop("PYTHONHOME", None)
+    clean_env.pop("PYTHONPATH", None)
+    clean_env["MINERU_MODEL_SOURCE"] = os.getenv("MINERU_MODEL_SOURCE", "local")
+
+    config_json = mineru_venv / "mineru-models.json"
+    if config_json.is_file():
+        clean_env["MINERU_TOOLS_CONFIG_JSON"] = str(config_json)
+
+    # If .venv-mineru exists in repository, ALWAYS prioritize base Python execution on Windows
+    # to bypass the notorious Windows venv launcher stub DLL initialization crash.
+    if mineru_venv.is_dir():
+        mineru_site = mineru_venv / "Lib" / "site-packages"
+        base_python = None
+        cfg_file = mineru_venv / "pyvenv.cfg"
+        if cfg_file.is_file():
+            try:
+                for line in cfg_file.read_text(encoding="utf-8").splitlines():
+                    if line.startswith("home ="):
+                        home_dir = Path(line.split("=", 1)[1].strip())
+                        candidate = home_dir / ("python.exe" if os.name == "nt" else "python")
+                        if candidate.is_file():
+                            base_python = candidate
+                            break
+            except Exception:
+                pass
+
+        if not base_python:
+            base_python = Path(sys.executable)
+
+        if mineru_site.is_dir() and base_python and base_python.is_file():
+            clean_env["PYTHONPATH"] = str(mineru_site)
+            scripts_dir = mineru_venv / ("Scripts" if os.name == "nt" else "bin")
+            clean_env["PATH"] = f"{scripts_dir}{os.pathsep}{base_python.parent}{os.pathsep}{clean_env.get('PATH', '')}"
+            clean_env["VIRTUAL_ENV"] = str(mineru_venv)
+            return [str(base_python), "-m", "mineru.cli.client"], clean_env
+
+    # Explicit executable fallback if not using base python bypass
+    if configured and not (os.name == "nt" and "mineru.exe" in configured.lower()):
+        return [configured], clean_env
+
     local = Path(sys.executable).parent / ("mineru.exe" if os.name == "nt" else "mineru")
     if local.is_file():
-        return str(local)
+        return [str(local)], clean_env
+
     found = shutil.which("mineru")
     if found:
-        return found
+        return [found], clean_env
+
     raise MinerUUnavailable(
         "未找到 MinerU。请在独立环境安装 requirements-mineru.txt，"
         "并将 MINERU_EXECUTABLE 设置为该环境的 mineru 可执行文件路径。")
@@ -287,12 +336,12 @@ def parse_pdf(pdf_path: Path) -> dict:
                     raise MinerUError("MinerU 缓存缺少原始结构化结果，请移除该文档的缓存后重新解析。")
                 result = _extract_result(files[0], target, pdf_path)
             return {**result, "artifact_dir": str(target)}
-        executable = _executable()
+        cmd_prefix, clean_env = _resolve_mineru_command_and_env()
         root.mkdir(parents=True, exist_ok=True)
         with TemporaryDirectory(prefix="parse-", dir=root) as temporary:
             work = Path(temporary) / "result"
             work.mkdir()
-            command = [executable, "-p", str(pdf_path), "-o", str(work / "raw"),
+            command = [*cmd_prefix, "-p", str(pdf_path), "-o", str(work / "raw"),
                        "-b", settings["backend"], "-m", settings["method"],
                        "-l", settings["lang"], "-d", settings["device"],
                        "--source", settings["source"], "-t", "true"]
@@ -303,6 +352,7 @@ def parse_pdf(pdf_path: Path) -> dict:
                     completed = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT,
                                                text=True, encoding="utf-8", errors="replace",
                                                timeout=int(os.getenv("MINERU_TIMEOUT", "1800")),
+                                               env=clean_env,
                                                check=False)
             except OSError as exc:
                 raise MinerUUnavailable(f"无法启动 MinerU：{exc}") from exc
@@ -312,9 +362,16 @@ def parse_pdf(pdf_path: Path) -> dict:
                 details = (work / "mineru.log").read_text(encoding="utf-8", errors="replace")[-2000:]
                 raise MinerUError(f"MinerU 解析失败，请检查模型和 PDF。{details}")
             files = list((work / "raw").rglob("*_content_list.json"))
-            if len(files) != 1:
-                raise MinerUError("MinerU 未生成唯一的 *_content_list.json 结构化结果。")
-            result = _extract_result(files[0], work, pdf_path)
+            if not files:
+                log_tail = ""
+                if (work / "mineru.log").is_file():
+                    log_tail = (work / "mineru.log").read_text(encoding="utf-8", errors="replace")[-1500:]
+                raise MinerUError(f"MinerU 未生成结构化结果 content_list.json。\n{log_tail}")
+            target_content_file = files[0]
+            if len(files) > 1:
+                matches = [f for f in files if pdf_path.stem in f.name]
+                target_content_file = matches[0] if matches else files[0]
+            result = _extract_result(target_content_file, work, pdf_path)
             # Publish a complete directory atomically, never a partial cache.
             try:
                 work.rename(target)

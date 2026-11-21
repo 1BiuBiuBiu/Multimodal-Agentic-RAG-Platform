@@ -28,13 +28,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, AIMessage
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from app.pipeline_config import PipelineConfig
 
 from app.agent import ask, astream_answer
-from ingestion.ingest import load_pdfs
-from vectorstore.store import build_index
-from app.documents import router as documents_router
+from ingestion.ingest import load_pdf_chunks
+from vectorstore.store import index_single_document
+from app.documents import router as documents_router, _pdf_name
 from app.experiment_api import router as experiment_router
 
 
@@ -73,6 +73,7 @@ class QueryRequest(BaseModel):
 
 
 class SourceItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
     text:   str
     source: str
     page:   int
@@ -80,6 +81,11 @@ class SourceItem(BaseModel):
     type: Optional[str] = "text"
     asset_images: Optional[List[str]] = None
     caption: Optional[Any] = None
+    section: Optional[str] = None
+    page_end: Optional[int] = None
+    mention_context: Optional[str] = None
+    image_path: Optional[str] = None
+    mentioned_visuals: Optional[List[dict]] = None
 
 
 class QueryResponse(BaseModel):
@@ -94,6 +100,7 @@ class QueryResponse(BaseModel):
     degradation_warnings: List[str] = Field(default_factory=list)
     decision_trace: list = Field(default_factory=list)
     token_usage: dict = Field(default_factory=dict)
+    token_breakdown: list = Field(default_factory=list)
     total_tokens: int = 0
     query_doc_history: list = Field(default_factory=list)
     original_query: Optional[str] = ""
@@ -118,27 +125,26 @@ def health():
 @app.post("/ingest")
 async def ingest(file: UploadFile = File(...)):
     """
-    Upload a PDF and add it to the vector index.
-    Existing index is rebuilt to include the new document.
+    Upload a PDF and incrementally add/update it in the vector index.
     """
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+    filename = _pdf_name(Path(file.filename or "").name)
 
-    dest = DATA_DIR / file.filename
+    dest = DATA_DIR / filename
     content = await file.read()
     dest.write_bytes(content)
     logger.info(f"Saved uploaded file: {dest}")
 
     try:
-        chunks, metas = load_pdfs(DATA_DIR)
-        build_index(chunks, metas)
+        chunks, metas = load_pdf_chunks(dest)
+        stats = index_single_document(filename, chunks, metas)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {e}")
 
     return {
-        "status":    "indexed",
-        "filename":  file.filename,
-        "chunks":    len(chunks),
+        "status":       "indexed",
+        "filename":     filename,
+        "chunks":       stats["doc_chunks"],
+        "total_chunks": stats["total_chunks"],
     }
 
 
@@ -180,6 +186,7 @@ def query(req: QueryRequest):
         degradation_warnings = result.get("degradation_warnings", []),
         decision_trace = result.get("decision_trace", []),
         token_usage = result.get("token_usage", {}),
+        token_breakdown = result.get("token_breakdown", []),
         total_tokens = result.get("total_tokens", 0),
         query_doc_history = result.get("query_doc_history", []),
         original_query = result.get("original_query", req.question),

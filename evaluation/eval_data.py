@@ -1,211 +1,236 @@
-EVAL_DATASET = [
-    # ==================== 1. AffectGPT (2501.16566v2.pdf) ====================
+EVAL_DATASET_SIMPLE = [
+    # ==================== 简单问题：Mamba (6条) ====================
     {
-        "question": "AffectGPT 这篇论文旨在解决多模态情感识别（MER）领域的什么核心痛点？",
-        "ground_truth": "当前社区缺乏具有密集、描述性情感注释的大规模数据集，且现有 MLLM 模型将多模态融合完全交由大语言模型处理，这对于强调多模态特性的情感识别任务来说是不够充分的。",
-    },
+        "question": "Mamba 是如何将选择机制（Selection Mechanism）引入结构化状态空间模型（SSM）的？具体改变了哪些参数？",
+        "ground_truth": "Mamba 通过将原本线性时不变（LTI）SSM 中的参数 Δ、B 和 C 变为输入 x 的函数，使模型从时间不变转变为时间可变（time-varying）。具体通过参数化投影定义 s_B(x) = Linear_N(x)、s_C(x) = Linear_N(x)、s_Δ(x) = Broadcast_D(Linear_1(x))，并结合 τ_Δ = softplus 实现。",
+    },  #[cite: 5, 6]
     {
-        "question": "AffectGPT 构建的大规模情感描述数据集叫什么名字？其采用了什么特殊的标注策略？",
-        "ground_truth": "数据集名为 MER-Caption（以及经过滤的 MER-Caption+）。其采用了 model-led, human-assisted（模型主导、人类辅助）的标注策略，结合了人类先验来指导描述生成和样本过滤。",
-    },
+        "question": "在结构化状态空间模型（S4/Mamba）中，零阶保持（Zero-Order Hold, ZOH）离散化规则的具体数学公式是什么？",
+        "ground_truth": "零阶保持（ZOH）将连续参数 (Δ, A, B) 转换为离散参数 (Ā, B̄) 的公式为：Ā = exp(ΔA)，B̄ = (ΔA)^{-1}(exp(ΔA) - I) · ΔB。",
+    },  #[cite: 3]
     {
-        "question": "AffectGPT 在数据过滤阶段（Low-level Filtering）主要排除了哪两类异常数据？",
-        "ground_truth": "第一类是音频和视频不匹配的数据（使用 TalkNet 工具检测并剔除）；第二类是生成描述长度异常（位于高斯分布两端、可能因模型未成功生成而导致过短或过长的描述）的数据。",
-    },
+        "question": "Mamba 模块的架构是如何简化设计的？它使用了什么激活函数，以及默认扩展因子 E 是多少？",
+        "ground_truth": "Mamba 将 H3 模块与现代神经网络中的门控 MLP（Gated MLP）模块合并为一个可均匀堆叠的单一模块：相比 H3，它将第一个乘法门替换为激活函数；相比 MLP，它在主分支中加入了卷积和 SSM。Mamba 使用 SiLU/Swish 激活函数，实验中默认扩展因子 E = 2，通过两层 Mamba 模块堆叠来匹配 Transformer 中交替 MHA 和 MLP 的 12D^2 参数量。",
+    },  #[cite: 7, 8]
     {
-        "question": "AffectGPT 模型设计中引入了什么核心操作来增强多模态集成，并将其移到了 LLM 外部？",
-        "ground_truth": "引入了 pre-fusion（预融合）操作，将跨模态交互移到了语言模型外部，论文中具体探讨了基于 Q-Former 和基于 Attention 的两种预融合方式。",
-    },
+        "question": "Mamba 默认使用实数还是复数参数化？论文中哪一个实验是唯一切换到复数参数化的场景？",
+        "ground_truth": "Mamba 默认使用实数（real-valued）SSM 参数化（默认初始化为 S4D-Real，即 A_n = -(n+1)），仅在 YouTubeMix 长上下文音频波形自回归预训练实验中切换为了复数参数化（S4D-Lin，即 A_n = -1/2 + ni）。",
+    },  #[cite: 9, 14]
     {
-        "question": "论文中提出的统一评估基准 MER-UniBench 涵盖了哪三个典型的多模态情感识别任务？",
-        "ground_truth": "包含：(1) 细粒度情感识别（Fine-grained Emotion Recognition）；(2) 基本情感识别（Basic Emotion Recognition）；(3) 情感分析（Sentiment Analysis）。",
-    },
+        "question": "在 Induction Heads（归纳头）合成任务中，Mamba 的训练序列长度是多少？测试时它能外推到多长的序列？",
+        "ground_truth": "在 Induction Heads 任务中，所有模型均在序列长度 2^8 = 256 上训练。测试时，Mamba 可以完美外推（100% 准确率）到 2^20 = 1,048,576（百万级）序列长度，即训练长度的 4000 倍，而其他基线方法均无法超过训练长度的 2 倍。",
+    },  #[cite: 10, 11, 29]
     {
-        "question": "在 AffectGPT 的初步实验中，作者最终选用哪两个模型分别作为音频 LLM（ALLM）和视频 LLM（VLLM）？",
-        "ground_truth": "选用 SALMONN 作为音频 LLM 生成音频线索，选用 Chat-UniVi 作为视频 LLM 提取视觉线索，并结合 GPT-3.5 融合多模态线索。",
-    },
-    {
-        "question": "为什么在 MER-Caption 数据集构建时，作者最终选用 GPT-3.5 来合并文本、音频和视频线索，而不是直接替换为开源 LLM？",
-        "ground_truth": "因为 MER 中的多模态融合极其复杂，经常遇到模态冲突（不同模态之间出现不一致或矛盾）问题，这对大模型的推理能力提出了极高的要求，使用开源 LLM 会导致性能下降。",
-    },
-    {
-        "question": "AffectGPT 在 MER-UniBench 基准测试中取得了怎样的主要性能提升？",
-        "ground_truth": "与现有的 MLLMs 相比，AffectGPT 在各项主要指标上取得了显著提升，相比现有模型实现了超过 9% 的性能提升。",
-    },
-    {
-        "question": "在 AffectGPT 的模型训练中，作者对 LLM 主干网络应用了什么技术来提高训练效率并提升性能？",
-        "ground_truth": "仅对 LLM 分支应用了 LoRA（Low-Rank Adaptation）模块进行微调，并将 LoRA 的默认 rank 值设为 16，同时冻结了 LLM 和单模态编码器的权重。",
-    },
-    {
-        "question": "论文中的用户研究（User Study）通过对比哪两个数据集的重叠样本，验证了 MER-Caption+ 标注策略的有效性？",
-        "ground_truth": "通过随机选择 20 个重叠样本，将 MER-Caption+ 与基于模型的 MERR-Coarse 以及经人类过滤的 MERR-Fine 进行人工对比，验证了其描述的准确性。",
-    },
+        "question": "在语言建模的下游零样本评测（Table 3）中，Mamba-2.8B 的平均准确率是多少？与同规模和两倍规模的 Pythia 相比表现如何？",
+        "ground_truth": "在 LAMBADA、HellaSwag、PIQA、ARC-E、ARC-C 和 WinoGrande 六项常识推理基准上，Mamba-2.8B 取得了 63.3% 的平均准确率和 6.22 的 Pile 验证集困惑度，不仅明显超越同规模的 Pythia-2.8B（平均准确率 59.1%），还超过了参数量两倍以上的 Pythia-6.9B（平均准确率 61.7%）。",
+    },  #[cite: 12]
 
-    # ==================== 2. GPT-1 (original.pdf) ====================
+    # ==================== 简单问题：AffectGPT (6条) ====================
     {
-        "question": "这篇论文（Radford et al., OpenAI）提出的通用半监督学习框架包含哪两个主要训练阶段？",
-        "ground_truth": "第一阶段是在大规模无标注文本语料库上进行生成式预训练（Generative Pre-training）；第二阶段是在每个具体任务的有标签数据上进行判别式微调（Discriminative Fine-tuning）。",
-    },
+        "question": "AffectGPT 构建 MER-Caption 数据集时采用了什么标注策略？MER-Caption 和 MER-Caption+ 分别包含多少样本与情感类别？",
+        "ground_truth": "AffectGPT 采用了“模型主导、人工辅助”（model-led, human-assisted）的标注策略。构建得到的 MER-Caption 包含 115,595 个粗标注样本、覆盖 2,932 种情感类别；经过多级过滤后的 MER-Caption+ 包含 31,327 个精标注样本、覆盖 1,972 种情感类别。",
+    },  #[cite: 38, 39]
     {
-        "question": "论文中用于无监督预训练的模型架构采用了哪种神经网络结构？",
-        "ground_truth": "采用了多层的 Transformer 解码器（Decoder-only Transformer）架构，利用多头自注意力机制和位置前馈层。",
-    },
+        "question": "MER-Caption+ 的两级样本过滤（低级过滤与高级过滤）分别采用什么技术来剔除低质量样本？",
+        "ground_truth": "低级过滤包含两步：使用准确率超过 90% 的 TalkNet 剔除音视频说话人不匹配的样本，并剔除描述长度位于高斯分布两端的异常样本。高级过滤采用基于模型的众包技术：利用人工标注数据集训练多模态分类器（CLIP ViT-L + HuBERT-L + 注意力融合），通过多数投票得到情感和情绪标签，剔除与文本描述提取结果不一致的样本。",
+    },  #[cite: 40]
     {
-        "question": "为什么论文选择 BooksCorpus 数据集而不是句子级别打乱的语料库来训练语言模型？",
-        "ground_truth": "因为 BooksCorpus 包含长段的连续文本，这使得生成式模型能够学习并条件化处理长距离依赖关系（Long-range dependencies）。",
-    },
+        "question": "AffectGPT 默认选用了哪些单模态编码器和大语言模型？训练过程中哪些模块是冻结的，哪些是可训练的？",
+        "ground_truth": "AffectGPT 默认采用 CLIP ViT-L 作为视觉编码器、HuBERT-L 作为音频编码器、Qwen2.5 作为大语言模型。训练时冻结 LLM 和单模态编码器的权重，仅微调 LLM 中的 LoRA 模块（默认 rank=16）、投影层（projector）以及预融合（pre-fusion）分支。",
+    },  #[cite: 45, 50]
     {
-        "question": "在将预训练模型迁移到下游有标签任务时，论文采用了什么方法来处理如文本对或问答等结构化输入，而无需大幅修改模型架构？",
-        "ground_truth": "采用了任务感知输入转换（Task-aware input transformations / 遍历式方法），将所有结构化的文本输入转换为模型可以处理的单个连续 Token 序列。",
-    },
+        "question": "MER-UniBench 评估基准涵盖哪三类多模态情感识别任务？分别包含哪些数据集？",
+        "ground_truth": "MER-UniBench 涵盖三类任务：（1）细粒度情感识别，包含 OV-MERD+（532 个样本）；（2）基础情感识别，包含 MER2023、MER2024、IEMOCAP 和 MELD；（3）情感极性分析（Sentiment Analysis），包含 CMU-MOSI、CMU-MOSEI、CH-SIMS 和 CH-SIMS v2。",
+    },  #[cite: 42, 43, 55]
     {
-        "question": "为什么在监督微调阶段加入语言建模（Language Modeling）作为辅助目标（Auxiliary Objective）是有益的？",
-        "ground_truth": "因为它通过 (a) 改善监督模型的泛化能力，以及 (b) 加速收敛，从而帮助了模型学习。",
-    },
+        "question": "在细粒度情感识别（OV-MERD+）的评测中，AffectGPT 如何通过三级分组策略消除同义词的影响？",
+        "ground_truth": "三级分组策略包括：Level 1 将不同词形映射到基础形式（如 happier 和 happiness 映射到 happy）；Level 2 将同义词映射到统一标签（如 happy 和 joyful 映射到 happy）；Level 3 利用 K=5 个情感轮，将每个扇区外层的细粒度标签映射到对应的内层核心情感标签，最后在集合层面计算 5 个情感轮的平均 F_S 作为主指标。",
+    },  #[cite: 42, 56]
     {
-        "question": "在模型的输入转换中，针对文本蕴含（Textual Entailment）任务是如何拼接前提和假设的？",
-        "ground_truth": "将前提（Premise）和假设（Hypothesis）Token 序列进行拼接，并在中间插入一个分隔符 Token（$）。",
-    },
-    {
-        "question": "论文中的模型使用了什么特殊的激活函数？",
-        "ground_truth": "使用了 GELU（Gaussian Error Linear Unit，高斯误差线性单元）激活函数。",
-    },
-    {
-        "question": "论文在 12 个研究的任务中有多少个实现了对以往 SOTA（State-of-the-Art）的超越？",
-        "ground_truth": "在研究的 12 个任务中，有 9 个任务显著超越了先前的最先进水平（State-of-the-art）。",
-    },
-    {
-        "question": "论文消融实验中发现，如果不使用无监督预训练直接在目标任务上训练 Transformer，性能会产生多大幅度的下降？",
-        "ground_truth": "缺乏预训练会损害所有任务的性能，平均得分相比完整模型下降了 14.8%。",
-    },
-    {
-        "question": "论文对零样本行为（Zero-shot Behaviors）的分析表明，随着生成式预训练更新次数的增加，模型的零样本性能呈现什么趋势？",
-        "ground_truth": "模型的零样本性能保持稳定并随着训练稳步上升，这表明生成式预训练支持学习各种任务相关的功能。",
-    },
+        "question": "为什么 AffectGPT 在基础情感识别任务中提出“命中率（Hit Rate）”而不是直接使用传统准确率（Accuracy）？",
+        "ground_truth": "因为 MLLM 生成的自由形式描述可能包含数量可变、超出基础情感类别的多个细粒度标签，而基础情感数据集每个样本仅提供一个多数投票得到的单一真实标签，传统准确率无法直接适配。Hit Rate 通过情感轮映射函数判断真实基础标签是否包含在模型预测的情感集合中，包含则记为 1，否则为 0。",
+    },  #[cite: 42, 43]
 
-    # ==================== 3. EmoPrefer (2507.04278v4.pdf) ====================
+    # ==================== 简单问题：EmoPrefer (6条) ====================
     {
-        "question": "EmoPrefer 这篇论文的核心研究目的是什么？",
-        "ground_truth": "探索多模态大语言模型（MLLMs）在解码人类情感偏好（Human Emotion Preferences）方面的潜力，从而为描述性多模态情感识别（DMER）提供更具成本效益的自动化评估策略。",
-    },
+        "question": "EmoPrefer-Bench 提出了哪两个核心评估指标来衡量 MLLM 作为情感偏好裁判的能力？",
+        "ground_truth": "EmoPrefer-Bench 提出了识别性能（Recognition Performance）和交换一致性（Swap Consistency）两个指标。前者衡量模型预测与人类偏好的对齐度（报告二分类和三分类的 WAF 与 ACC，默认以二分类 WAF 为单一指标）；后者通过交换成对描述的输入顺序，计算模型输出保持一致的比例，以衡量对输入顺序的鲁棒性。",
+    },  #[cite: 61, 63]
     {
-        "question": "论文构建的第一个以人类情感为中心的偏好数据集叫什么名字？",
-        "ground_truth": "EmoPrefer-Data。",
-    },
+        "question": "EmoPrefer-Data 的视频和成对描述来源于哪里？在人工偏好标注时如何筛选标注员并保证标签质量？",
+        "ground_truth": "EmoPrefer-Data 选取了同时出现在 MERR-Fine 和 MER-Caption+ 中的 1,368 个重叠视频（原始视频来自 MER2024），每个视频配有一对来自这两个数据集的描述。标注前，候选人需在 12 个外部 8 名标注员达成一致的样本上测试，仅保留准确率达到 75% 以上的 3 名合格标注员；最终仅保留 3 名标注员完全达成一致的样本。",
+    },  #[cite: 61, 62]
     {
-        "question": "EmoPrefer-Data 是通过如何选择样本来确保数据质量的？",
-        "ground_truth": "通过选择两个描述性情感数据集（MERR-Fine 和 MER-Caption+）中重叠的视频样本（共 1,368 个），并仅保留三位专家标注者达成完全共识的偏好标注。",
-    },
+        "question": "EmoPrefer-Data 的标注员间一致性（Inter-annotator Agreement）在不含平局和包含平局时分别是多少？说明了什么？",
+        "ground_truth": "在不含平局（w/o tie）的情况下，三名标注员的平均一致性为 69.31%；包含平局（w/ tie）时平均一致性下降约 10% 至 59.23%。这表明标注员在判断“平局”时更难达成共识，平局相比明确偏好具有更高的歧义性。",
+    },  #[cite: 62]
     {
-        "question": "在 EmoPrefer-Bench 的评估指标中，“交换一致性（Swap Consistency）”旨在衡量模型什么方面的能力？",
-        "ground_truth": "评估模型对输入顺序交换的鲁棒性，确保模型的偏好预测是基于描述内容而不是基于输入顺序（如 Description 1 和 Description 2 互换位置后预测结果应保持一致）。",
-    },
+        "question": "在 EmoPrefer-Bench 的所有开源与闭源 MLLM 中，哪一个模型表现最好？取得了怎样的成绩？",
+        "ground_truth": "开源模型 Qwen2.5-Omni（采用 S2 策略）在所有模型中表现最佳，取得了 67.21% 的二分类 WAF 和 79.09% 的交换一致性，超越了 Gemini-1.5-Flash（64.64% WAF、72.04% 交换一致性）和 GPT-4o（56.57% WAF、64.55% 交换一致性）等闭源模型。",
+    },  #[cite: 65]
     {
-        "question": "EmoPrefer-Bench 提出了几种用于 MLLM 偏好预测的提示词策略？其中哪几种策略引入了外部 LLM？",
-        "ground_truth": "总共提出了 4 种策略（S1 ~ S4）。其中 S3 和 S4 策略引入了外部 LLM（如 Qwen2.5-7B）来处理纯文本的第二步推理。",
-    },
+        "question": "在 EmoPrefer-Bench 的 S3 和 S4 策略中，对比外部 LLM（Qwen2.5-7B 与 Qwen3-14B）得出了什么结论？",
+        "ground_truth": "实验发现 Qwen3-14B 在 S3 策略下表现更好，而 Qwen2.5-7B 在 S4 策略下表现更好；在各自最优策略的对比中，参数更小的 Qwen2.5-7B 总体上优于 Qwen3-14B。这说明更大的外部 LLM 并不一定能带来更好的人类情感偏好对齐，因此论文默认采用 Qwen2.5-7B。",
+    },  #[cite: 64]
     {
-        "question": "实验发现，使用更大的外部 LLM（如 Qwen3-14B）是否总能带来更好的情感偏好对齐效果？",
-        "ground_truth": "不一定。统计分析表明，较小的 Qwen2.5-7B 在整体表现上通常优于 Qwen3-14B，这说明更大的 LLM 并不能保证更好地与人类情感偏好对齐。",
-    },
-    {
-        "question": "在所有的评测 MLLM 中，哪款模型在二分类加权 F1 分数（WAF）和交换一致性上取得了最突出的开源模型表现？",
-        "ground_truth": "Qwen2.5-Omni（在二分类 WAF 和交换一致性上均表现极为优异）。",
-    },
-    {
-        "question": "论文中的模型基础众包（Model-Based Crowdsourcing）实验表明，通过聚合 Top-k 模型预测结果，对模型范围有什么建议？",
-        "ground_truth": "实验表明将模型范围限制在开源模型（如 k=3 或 4）即可获得优异的众包提升，而限制在闭源模型则会导致明显的性能下降。",
-    },
-    {
-        "question": "EmoPrefer 如何将偏好预测应用到实际的模型排名中？",
-        "ground_truth": "结合偏好预测结果构建胜负矩阵 W，然后利用 Bradley-Terry 算法估计每个模型的相对优势得分（Advantage Score）并生成模型排名。",
-    },
-    {
-        "question": "EmoPrefer-Data 在版权和许可方面遵循什么规范？",
-        "ground_truth": "遵循 CC BY-NC 4.0 非商业许可协议，原始视频取自 MER2024 并获得原作者授权，同时对视频进行了卡通化处理以保护隐私。",
-    },
+        "question": "EmoPrefer 在实际应用（如 MER2025 挑战赛参赛模型排名）中是如何将成对偏好转化为全局模型排名的？",
+        "ground_truth": "它采用基于开源模型的众包裁判（top-k=3）对任意两个模型生成的描述进行成对偏好预测，统计每对模型在所有样本上的胜、负、平次数构成矩阵 W，再利用 Bradley-Terry 算法通过最大化似然函数估计各模型的相对优势参数 θ_i，按优势得分生成全局排名。",
+    },  #[cite: 67, 78]
 
-    # ==================== 4. Mamba (2312.00752v2.pdf) ====================
+    # ==================== 简单问题：CmIR (6条) ====================
     {
-        "question": "传统的结构化状态空间模型（SSMs，如 S4）虽然计算高效且具长程建模能力，但在处理哪类数据时表现不如 Transformer？",
-        "ground_truth": "处理离散且信息密集的数据（例如语言文本和 DNA 序列）。",
-    },
+        "question": "CmIR 框架将每个模态的原始特征解耦为哪两部分？总损失函数由哪几项组成？",
+        "ground_truth": "CmIR 将每个模态的原始表示 X_m 解耦为因果不变表示（Z_m^{inv}）和环境特定虚假表示（Z_m^{spu}）。其总优化目标由四项组成：任务预测损失 L_pred、不变性约束 R_inv^{(m)}、互信息约束 R_dec^{(m)} 以及重构约束 R_rec^{(m)}。",
+    },  #[cite: 81, 83, 85]
     {
-        "question": "传统 SSM 无法有效处理文本的核心根源是什么？",
-        "ground_truth": "它们是线性时不变（LTI, Linear Time Invariant）模型，其参数在时间维度上保持恒定，缺乏根据输入内容进行动态选择（Selective）的能力。",
-    },
+        "question": "由于直接计算互信息难以求解，CmIR 在工程上如何近似实现互信息约束 R_dec^{(m)}？",
+        "ground_truth": "CmIR 通过在特征空间中强制 Z_m^{inv} 和 Z_m^{spu} 正交（零线性相关）来近似最小化互信息：先对两者进行特征归一化并计算相关矩阵 C^m = Nor(Z_m^{inv})Nor(Z_m^{spu})^T，再最小化 Frobenius 范数 ||diag(C^m) + α · (C^m - diag(C^m))||_2，其中超参数 α∈(0,1) 用于平衡同一样本（对角项）与跨样本（非对角项）的正交约束强度。",
+    },  #[cite: 85]
     {
-        "question": "Mamba 引入的选择机制（Selection Mechanism）主要将哪几个参数变成了输入（x）的函数？",
-        "ground_truth": "将参数 Δ、B 和 C（以及隐式影响离散化矩阵 A_bar 和 B_bar 的参数）变成了输入依赖的函数。",
-    },
+        "question": "CmIR 论文中的定理 2（Theorem 2）在 λ_1, λ_2, λ_3 → ∞ 时证明了哪三条理论保证？",
+        "ground_truth": "定理 2 证明了在假设标签 Y 独立于环境 E、函数类容量充足且数据服从 SCM 的条件下，当 λ_1, λ_2, λ_3 → ∞ 时，最优解满足：（1）完美重构（重构误差极限为 0）；（2）不变表示与环境独立（Z_m^{inv} ⊥ E）；（3）虚假表示不包含额外因果信息（I(Y; Z_m^{spu} | Z_m^{inv}, E) = 0）。",
+    },  #[cite: 83, 93]
     {
-        "question": "既然选择机制破坏了时间不变性并使快速卷积计算失效，Mamba 是通过什么算法在硬件上实现高效计算的？",
-        "ground_truth": "采用了一种硬件感知（Hardware-aware）的并行扫描（Parallel Scan）算法，通过内核融合（Kernel Fusion）和重计算（Recomputation）将扩展状态保留在快速 SRAM 中，避免了高带宽内存（HBM）的瓶颈。",
-    },
+        "question": "CmIR 在哪三类多模态情感计算任务以及哪些数据集上进行了实验评估？",
+        "ground_truth": "CmIR 在三类任务上进行了评估：（1）多模态情感分析（MSA），使用 CMU-MOSI、CMU-MOSI (OOD)、CMU-MOSEI 和 CH-SIMS-v2；（2）多模态幽默检测（MHD），使用 UR-FUNNY；（3）多模态讽刺检测（MSD），使用 MUStARD。",
+    },  #[cite: 85, 86]
     {
-        "question": "Mamba 的架构设计（Mamba Block）相比于传统的 H3 或 Transformer 有什么简化创新？",
-        "ground_truth": "它将状态空间层（SSM）与类似 Gated MLP（SwiGLU）的组件结合进一个单一且同质化堆叠的模块中，彻底去除了 Attention 模块甚至传统的独立 MLP 模块。",
-    },
+        "question": "在 CMU-MOSEI 上的探针实验（Probing Experiments）如何验证 Z^{inv} 和 Z^{spu} 实现了语义分离？",
+        "ground_truth": "探针实验分别用 Z^{inv} 和 Z^{spu} 单独预测环境噪声系数 α^{(e)} 和情感标签：Z^{inv} 在环境预测上 MSE 很高（2.04），但在情感预测上准确率很高（Acc2 87.8%、Acc7 55.1%、MAE 0.513）；相反，Z^{spu} 在环境预测上 MSE 很低（0.87），但在情感预测上 Acc2 仅为 62.8%（恰好等于全预测为正向的标签偏置准确率，Corr 仅 0.001），证实了两者分别承载因果与非因果环境信息。",
+    },  #[cite: 101, 103]
     {
-        "question": "在定理 1 中，当状态维数 N=1、A=-1、B=1 且 Δ 通过 Softplus 激活时，选择性 SSM 的递推公式实际上对应了传统 RNN 的什么机制？",
-        "ground_truth": "对应了经典的 RNN 门控机制（Gating Mechanism）。",
-    },
-    {
-        "question": "在归纳头（Induction Heads）实验中，Mamba 在面对比训练长度长数千倍的测试序列时表现如何？",
-        "ground_truth": "Mamba 展现出了完美的泛化和外推能力，能够在测试时完美泛化到 2^20（约 100 万）长度的序列（比训练长度长 4000 倍）。",
-    },
-    {
-        "question": "在 Pile 数据集的语言模型预训练（Scaling Laws）中，Mamba 的表现与强 Transformer 基线（Transformer++）相比如何？",
-        "ground_truth": "Mamba 是首个在相同参数量和计算预算下完全匹配强 Transformer++ 训练食谱性能的线性时间序列模型。",
-    },
-    {
-        "question": "在人类基因组（HG38）长序列预训练的上下文扩展实验中，随着上下文长度增加至 1M，Mamba 与 HyenaDNA 的困惑度（Perplexity）表现有何不同？",
-        "ground_truth": "Mamba 的困惑度随着上下文增加而持续平稳下降（性能变好），而 HyenaDNA 的困惑度反而随着序列长度增加而上升。",
-    },
-    {
-        "question": "相比于同尺寸的 Transformer 模型，Mamba 在自回归生成时的吞吐量（Throughput）表现如何？",
-        "ground_truth": "由于不需要 KV 缓存且具备线性时间复杂度，Mamba 的生成吞吐量比同尺寸 Transformer 高出约 5 倍。",
-    },
+        "question": "在模型复杂度分析（Table 9）中，CmIR 在 MUStARD 和 CMU-MOSI 上的参数量与计算量表现如何？",
+        "ground_truth": "在 MUStARD 上，CmIR 仅用 13.44M 参数就取得了 80.00% 的 Acc2，参数量少于 HKT（17.10M）、MCL（13.83M）和 MGCL（14.28M）；在 CMU-MOSI 上，CmIR 参数量为 187.51M、计算量为 8.95G FLOPs，FLOPs 低于 EMOE（10.02G）、GSCon（12.22G）和 Diffusion Bridge（11.52G）所有基线，同时取得了最高的 89.6% Acc2。",
+    },  #[cite: 101, 102]
 
-    # ==================== 5. CmIR (2604.18460v1.pdf) ====================
+    # ==================== 简单问题：AffectGPT-RL (6条) ====================
     {
-        "question": "论文指出多模态情感计算（MAC）当前面临什么样阻碍模型泛化能力的核心问题？",
-        "ground_truth": "模型往往会从训练数据中学习到虚假关联（Spurious Correlations）而不是真正的因果关系，导致在面对分布偏移或有噪模态时性能急剧下降。",
-    },
+        "question": "为什么 AffectGPT-RL 要采用强化学习而不是传统的 token 级损失来训练开放词汇多模态情感识别（OV-MER）模型？",
+        "ground_truth": "因为传统的 token 级损失与基于情感轮（EW）的语义评估指标存在严重不对齐（如 joyful 和 awful 的 token 相似度高但情感语义相反）；同时，EW 指标由于涉及 logits 随机采样、离散词对词查表聚类映射以及集合基数运算，本身不可微，无法通过梯度反向传播直接优化，而强化学习能够直接优化不可微目标。",
+    },  #[cite: 105, 121]
     {
-        "question": "CmIR 框架的核心思想是将每个模态解耦成哪两个互补的成分？",
-        "ground_truth": "(1) 因果不变表示（Causal Invariant Representation, Z_m^inv）；(2) 环境特定虚假表示（Environment-specific Spurious Representation, Z_m^spu）。",
-    },
+        "question": "AffectGPT-RL 的两阶段训练流程分别使用了什么数据集？如何防止训练与测试之间的数据泄漏？",
+        "ground_truth": "第一阶段冷启动训练使用 MER-Caption+（31,327 个含描述和开放词汇标签的样本）；第二阶段强化学习（GRPO）使用人工高质量标注的 MER2025-OV。为防止数据泄漏，作者对训练集与测试集进行了严格重叠检查，发现并剔除了 MER2025-OV 与 OV-MERD+ 测试集重叠的 200 个样本，最终使用 1,000 个样本进行强化学习。",
+    },  #[cite: 107, 108, 124]
     {
-        "question": "CmIR 的整体优化目标函数由哪三个核心约束组成？",
-        "ground_truth": "(1) 不变性约束（Invariance Constraint, R_inv）；(2) 互信息约束（Mutual Information Constraint, R_dec）；(3) 重构约束（Reconstruction Constraint, R_rec）。",
-    },
+        "question": "AffectGPT-RL 在强化学习阶段设计了哪五种奖励函数？各自监督模型的哪一部分输出？",
+        "ground_truth": "五种奖励函数分别是：（1）格式奖励（Format Reward），检查输出是否同时包含思考和答案标签；（2）准确率奖励（Accuracy Reward），计算答案 o^a 与真实标签 y 的 EW 指标得分；（3）对齐奖励（Alignment Reward），计算思考过程提取的情感词 e^t 与答案 o^a 的 Jaccard 相似度；（4）双重奖励（Dual Reward），计算 e^t 与真实标签 y 的 EW 得分；（5）感知奖励（Perception Reward），利用 Qwen2.5-Omni 结合 Bradley-Terry 排序，对忠实于视频内容的 Top-50% 思考过程给予奖励 1。",
+    },  #[cite: 106, 107, 121, 122]
     {
-        "question": "在缺乏显式环境标签（E）的情况下，CmIR 是如何模拟不同虚拟环境来进行不变性约束的？",
-        "ground_truth": "通过对原始特征注入不同程度的加性高斯噪声（由环境相关系数 α^(e) 控制）来模拟虚拟环境。",
-    },
+        "question": "在 GRPO 算法中，采样组大小 G 对 AffectGPT-RL 性能有何影响？论文默认将 G 设为多少？",
+        "ground_truth": "实验在 G=2 到 16 范围内对比发现，无论 G 取何值，经过强化学习的模型均优于无 RL 基线；但过小的 G 因采样有限无法充分发挥 GRPO 优势，而 G ≥ 4 后已能保证效果，继续增大 G 无显著提升却会增加计算开销，因此论文默认设置 G = 4。",
+    },  #[cite: 111]
     {
-        "question": "CmIR 如何在计算上近似实现最小化不变表示与虚假表示之间的互信息（I(Z_m^inv; Z_m^spu)）？",
-        "ground_truth": "通过在特征空间中强制执行正交性（零线性相关，即通过归一化特征的矩阵乘积接近对角阵）作为互信息最小化的计算代理。",
-    },
+        "question": "AffectGPT-RL 如何通过对照实验证明其性能提升主要来自强化学习而非新增了 MER2025-OV 训练数据？",
+        "ground_truth": "作者进行了控制变量实验（Table 5）：使用与 AffectGPT-RL 完全相同的两阶段训练数据（MER-Caption+ 与 MER2025-OV）对原始 AffectGPT 进行监督训练，其在 OV-MERD+ 上的得分仅从 62.52 略微提升至 62.84，远低于 AffectGPT-RL 的 68.39，从而证明性能增益主要源于强化学习而非数据量增加。",
+    },  #[cite: 111, 112]
     {
-        "question": "重构约束（R_rec）在 CmIR 框架中起到了什么关键作用？",
-        "ground_truth": "确保解耦后的因果和虚假表示完整保留了原始输入的所有信息，从而防止信息丢失并避免退化的解耦解。",
-    },
-    {
-        "question": "在 CMU-MOSI（OOD）基准测试中，CmIR 的表现说明了什么？",
-        "ground_truth": "证明了其在面对经历过模拟退火算法构造的大幅词语-情感分布偏移的测试集时，依然具有卓越的分布外鲁棒性（OOD Robustness）。",
-    },
-    {
-        "question": "当对所有模态施加高斯噪声（噪声率从 10% 到 70%）时，CmIR 表现出怎样的抗噪特性？",
-        "ground_truth": "CmIR 在各项指标（特别是 MAE）上均显著优于其他竞争基线，且随着噪声水平的增加，其性能优势变得更加显著。",
-    },
-    {
-        "question": "消融实验表明，在去除不变性约束（R_inv）、互信息约束（R_dec）或重构约束（R_rec）中，哪项对模型性能损害最大？",
-        "ground_truth": "去除不变性约束（R_inv）和互信息约束（R_dec）会导致最显著的性能下降，凸显了它们在捕获稳定因果机制和解耦虚假信息方面的核心地位。",
-    },
-    {
-        "question": "通过 t-SNE 特征可视化，CmIR 提取的因果不变语言表示（Z^inv）展现出了什么特征？",
-        "ground_truth": "不同情感类别（正向、负向、中性）的特征在特征空间中边界清晰、聚类良好（尤其是中性样本合理地分布在正负之间），而常规模型提取的特征则存在大量重叠。",
-    },
+        "question": "冷启动训练阶段和强化学习阶段的数据量缩放（Data Scaling）实验分别得出了什么发现？",
+        "ground_truth": "在冷启动阶段，增加数据量不仅提升冷启动模型本身的性能，也显著提升后续强化学习的效果（因为 RL 主要强化正确响应而非引入新知识）；在强化学习阶段，仅使用 10 个样本就能带来性能提升，且随着样本量增加到 1,000 性能持续上升，尚未达到性能上限。",
+    },  #[cite: 110, 111]
 ]
+
+
+EVAL_DATASET_COMPLEX = [
+    # ==================== 复杂问题：单篇深度综合 (15条) ====================
+    # --- Mamba (3条) ---
+    {
+        "question": "引入选择机制导致 SSM 失去全局卷积等价性，Mamba 如何通过硬件感知算法克服计算与显存瓶颈？在训练速度、推理吞吐和显存占用上取得了怎样的实证结果？",
+        "ground_truth": "由于时变 SSM 不能使用 FFT 全局卷积，直接物化 (B, L, D, N) 维度的隐状态会导致严重显存读写瓶颈。Mamba 结合三项技术解决该问题：（1）核融合：将 (Δ, A, B, C) 从慢速 HBM 读入快速 SRAM，在 SRAM 内完成离散化、循环扫描并与 C 相乘，仅将 (B, L, D) 输出写回 HBM，将 IO 减少 O(N) 倍；（2）并行扫描：用工作高效的并行关联扫描消除串行循环瓶颈；（3）重计算：前向不保存中间状态，反向传播时在 SRAM 中重算。实证表明，其扫描算子在序列长度超过 2K 时快于 FlashAttention-2，比标准 PyTorch 扫描快 20–40 倍；端到端推理因无需 KV 缓存吞吐量比同规模 Transformer 高 4–5 倍；训练显存占用与使用 FlashAttention-2 优化的 Transformer 相当。",
+    },  #[cite: 7, 15, 28, 36]
+    {
+        "question": "从理论和机制层面解释 Mamba 中选择性参数 Δ、B、C 的作用，以及定理 1（Theorem 1）如何揭示选择机制与传统 RNN 门控机制的联系？",
+        "ground_truth": "定理 1 证明当 N=1, A=-1, B=1, s_Δ=Linear(x), τ_Δ=softplus 时，经 ZOH 离散化后的选择性 SSM 精确退化为经典门控 RNN：g_t = σ(Linear(x_t))，h_t = (1 - g_t)h_{t-1} + g_t x_t，说明离散化步长 Δ 广义化了 RNN 门控。机制上，大 Δ 会重置状态 h 并聚焦当前输入 x_t，小 Δ 则维持历史状态并忽略当前输入；选择性 B 和 C 分别精细控制将输入写入隐状态以及将隐状态输出到 y_t 的过程。由此带来三种核心能力：过滤噪声实现可变间距建模、屏蔽无关历史使性能随上下文长度单调提升、以及在拼接序列边界处自动重置状态。",
+    },  #[cite: 8, 9, 27, 28]
+    {
+        "question": "Mamba 论文在讨论中提到的“连续-离散谱上的没有免费午餐（No Free Lunch）”现象是什么？DNA 与 YouTubeMix 音频实验如何分别印证了这一观点？",
+        "ground_truth": "结构化 SSM 源自连续系统离散化，对连续信号有强归纳偏置，而选择机制主要弥补了 LTI SSM 在离散、信息密集模态上的短板，但可能损害其在平滑连续信号上的优势。在离散的 DNA 序列（HG38）实验中，Mamba 在 1024 到 1M 长度上困惑度持续改善，而 LTI 模型 HyenaDNA 随长度增加而退化；但在均匀采样且平滑的 YouTubeMix 音频波形消融实验中（Appendix E.4.1），将 S4 换成选择性 S6 在整体架构上反而明显降低性能（Mamba-S4 优于 Mamba-S6），但若仅在靠近原始音频的 U-Net 外层保留 LTI 的 Mamba-S4、仅消融已压缩“token 化”的内层，两者差距则大幅缩小。",
+    },  #[cite: 13, 17, 34, 35]
+
+    # --- AffectGPT (3条) ---
+    {
+        "question": "针对主流 AV-LLM 将跨模态交互完全交给 LLM 的不足，AffectGPT 提出了哪两种预融合操作？二者在时序处理与计算机制上有何区别，在 MER-UniBench 上的消融结果如何？",
+        "ground_truth": "AffectGPT 将跨模态交互移至 LLM 外部，默认作用于音频编码器特征 Z_a 和视频编码器特征 Z_v，提出了基于 Q-Former 和基于 Attention 的两种预融合操作。Q-Former 预融合保留音视频的时序信息，通过 K 个可学习查询 token 与沿时间维度拼接的音视频特征做交叉注意力交互来蒸馏信息；Attention 预融合则先通过平均池化直接压缩单模态时序信息，再通过线性映射动态计算模态注意力权重进行加权融合。在 MER-UniBench 消融实验中，无预融合平均分为 72.95，加入 Q-Former 提升至 74.16，更简洁的 Attention 预融合达到最高的 74.77（基础情感识别达 68.38），印证了时序压缩在 MER 任务中的有效性。",
+    },  #[cite: 41, 42, 44]
+    {
+        "question": "AffectGPT 在 MER-UniBench 上大幅领先现有 MLLM，论文通过哪些消融实验排除了“优势仅仅来自更强的 LLM 或单模态编码器”这一质疑？",
+        "ground_truth": "AffectGPT 在音视频文本全模态下取得了 74.77 的平均分，比现有最佳 MLLM（Emotion-LLaMA 的 64.17）高出超过 9%（10.6 个百分点）。为归因性能来源，作者固定其他设置分别替换了 LLM（Qwen2.5、LLaMA3 等）、音频编码器（HuBERT-L、WavLM-L、Data2vec、ImageBind）和视频编码器（CLIP ViT、EVA_CLIP、DINOv2），结果显示更换骨干模型带来的性能波动非常有限（LLM 间约 74.40–75.12，音视频编码器间波动同样微小）；相反，仅更换训练数据集（如从通用指令集或其他情感描述集换为 MER-Caption+）或移除预融合模块会导致显著波动，从而证明核心增益来自高质量大规模数据集 MER-Caption+ 与预融合框架。",
+    },  #[cite: 39, 43, 44, 45]
+    {
+        "question": "在输入模态与视频采样帧数的消融实验中，AffectGPT 对“人脸（face）与整帧（frame）对比”以及“采样帧数选择”得出了哪些工程结论？",
+        "ground_truth": "在输入模态实验中，多模态融合（音+脸+文 74.77）显著优于任意单模态（音频 60.08、人脸 60.47、整帧 59.47、文本 67.44）；同时，使用人脸提取器得到的 face 输入略优于原始整帧 frame 输入（74.77 vs 73.39），且同时输入 face 和 frame（74.60）并未带来进一步提升，说明当前 MER 数据集的情感线索高度集中在人物面部而非背景环境。在采样帧数（2 至 64 帧）实验中，帧数过少（低于 2 帧）会因信息丢失导致性能显著下降，但超过 16 帧后几乎没有额外增益，原因是 MER 视频通常较短（多为 2–5 秒）且面部表情相对稳定，因此默认采样 8 帧兼顾了效果与效率。",
+    },  #[cite: 44, 45, 54, 58]
+
+    # --- EmoPrefer (3条) ---
+    {
+        "question": "EmoPrefer-Bench 设计的 S1 至 S4 四种提示策略在推理链上如何递进？为什么大多数 MLLM 偏好 S3/S4，而 Qwen2.5-VL 和 Qwen2.5-Omni 反而偏好 S1/S2？",
+        "ground_truth": "S1 至 S4 的推理链逐步拉长：S1 直接将视频与两段候选描述输入 MLLM 一步判断；S2 拆分为先由 MLLM 生成视频情感描述，再由该 MLLM 自身对比候选描述；S3 将第二步替换为外部纯文本 LLM（Qwen2.5-7B）执行；S4 进一步将外部 LLM 步骤拆为偏好推理与答案提取两步。实验表明，大多数 MLLM 在 S3/S4 上更优，因为多模态微调往往削弱了其原本的纯文本理解能力，引入外部 LLM 能弥补这一短板；而 Qwen2.5-VL 和 Qwen2.5-Omni 凭借先进训练策略保留了强大的语言理解能力，能够直接处理复杂提示，此时 S3/S4 过长的推理链反而会引入误差累积导致性能下降。",
+    },  #[cite: 63, 64, 76, 77]
+    {
+        "question": "在提升偏好预测可靠性方面，“正常-交换组合（Normal-Swapped）”与“基于模型的众包（Model-Based Crowdsourcing）”的交互效果如何？论文推荐了怎样的性价比配置？",
+        "ground_truth": "对于单一 MLLM，执行两次正常顺序和两次交换顺序预测并进行多数投票（Normal-Swapped），能够提升大多数 MLLM 的识别性能（少数模型如 Chat-UniVi 例外）。然而，当引入多模型众包（聚合 Top-k 模型预测）时，Normal-Swapped 仅带来微弱提升甚至在部分设置下导致性能下降，因此众包时默认不启用。同时，模型范围受限于闭源模型会明显降质，而限制在开源模型范围内仍能取得接近全模型集合的优异表现；综合考虑识别性能、交换一致性与成本，论文推荐采用开源模型众包并设置 k=3 或 4。",
+    },  #[cite: 65, 66]
+    {
+        "question": "EmoPrefer-Bench 对识别性能（2-Class/3-Class）与交换一致性之间的皮尔逊相关系数（PCC）分析揭示了什么规律？",
+        "ground_truth": "当统计所有提示策略的得分时，二分类与三分类识别性能高度相关（PCC 为 0.89），但二者与交换一致性的相关性较弱（分别为 0.53 和 0.16），说明识别性能与交换一致性刻画了模型不同维度的能力——前者反映偏好对齐准确度，后者反映对输入顺序的鲁棒性。而当仅统计各模型最优策略下的得分时，三者相关性显著升高（0.97、0.88、0.90），说明弱模型在不同策略下交换一致性波动极大，而真正优秀的模型往往能在准确性与顺序鲁棒性上同时表现出色。",
+    },  #[cite: 65]
+
+    # --- CmIR (3条) ---
+    {
+        "question": "在真实数据缺乏显式环境标签的情况下，CmIR 如何构造虚拟环境以实现不变性约束？为什么作者最终选择直接最小化不变表示的 L1 距离而非基于 KL 散度的条件分布距离？",
+        "ground_truth": "CmIR 借鉴数据增强思想，通过向原始模态特征 X_m 注入不同强度的加性高斯噪声 ε_m^{(e)} = α^{(e)} · ε_m（其中 α^{(e)} = α^{(1)} · e）来模拟 K 个虚拟环境，并将扰动特征输入编码器获得各环境的不变表示 Z_m^{inv,(e)}。若按标准方法计算不同环境输出分布间的 KL 散度，需要为每个模态额外引入单模态预测器，这不仅增加模型复杂度、在单模态预测器欠训练时引入噪声，而且难以直接应用于回归任务。因此 CmIR 采用更强且简洁的约束，直接最小化所有环境对之间不变表示的 L1 距离；对比实验（Table 8）也证实两者性能相当甚至 L1 略优。",
+    },  #[cite: 84, 85, 100, 101]
+    {
+        "question": "CmIR 在分布外（OOD）场景以及高斯噪声、未见 OOD 噪声（拉普拉斯噪声与随机擦除）下的实证表现如何？这印证了其哪一核心设计优势？",
+        "ground_truth": "在 CMU-MOSI (OOD) 基准上，CmIR 取得 48.5% Acc7 和 84.4% Acc2，不仅超越 CLUE、GEAR、MulDeF 等因果去偏基线，且相比强基线 ITHP 的优势从分布内（Acc7 +2.1、Acc2 +1.5）进一步扩大到分布外（Acc7 +7.2、Acc2 +3.5）。在 10%–70% 噪声率的高斯噪声以及训练加高斯、测试换拉普拉斯与随机擦除的 OOD 混合噪声实验中，CmIR 在 CMU-MOSI 和 CMU-MOSEI 上均全面优于 TMDC、C-MIB 和 Multimodal Boosting，尤其在 MAE 指标上优势随噪声升高而扩大。这印证了 CmIR 不依赖特定偏置假设、直接学习跨环境因果不变表示的通用泛化优势。",
+    },  #[cite: 86, 87, 88]
+    {
+        "question": "结合 CmIR 的消融实验（Table 5）与超参数敏感性分析（Figure 5 与 Table 12），三个正则约束及虚拟环境参数（K 与 α^{(1)}）各自对性能有何影响？",
+        "ground_truth": "在 CMU-MOSI 消融中，完全去除因果解耦（Vanilla）性能跌幅最大（Acc2 89.6→85.8、Acc7 49.8→46.3）；去除不变性约束 R_inv 或互信息约束 R_dec 均导致相近的显著下降（Acc7 均降至 45.7），而去除重构约束 R_rec 降幅最小（Acc7 47.7）。超参数分析表明：权重过小（尤其 λ_1 过小时）性能下降最明显，而 λ_2 或 λ_3 过大也会因压制预测损失和不变性约束导致性能回落；相比环境数量 K（变化较平缓），基础噪声强度 α^{(1)} 影响更大——过小（如 1e-8）无法模拟有效环境差异导致性能差，在 1e-7 至 1 范围内整体稳健，且在 α^{(1)}=1 时达到最高性能（Acc2 84.6、Acc7 49.0）。",
+    },  #[cite: 87, 88, 101, 102, 103]
+
+    # --- AffectGPT-RL (3条) ---
+    {
+        "question": "AffectGPT-RL 在强化学习阶段遇到了什么奖励黑客（Reward Hacking）问题？作者设计的三种长度惩罚如何缓解该问题？此外，关于“思考过程”的消融实验得出了什么反直觉结论？",
+        "ground_truth": "模型出现了输出冗长、堆砌大量冗余情感词的奖励黑客现象，因为 EW 指标会自动去重同义词，多预测词汇不会降低同义词维度的得分反而增加命中真实标签的概率。作者设计了惩罚力度从严到松的三种长度惩罚 P_1、P_2、P_3 并乘以准确率奖励和双重奖励，实验表明三者都能抑制过长输出，但最严厉的 P_1 会导致奖励退化，而 P_2 和 P_3 能在不降质的前提下消除冗长。在思考过程消融中，移除思考过程仅输出并优化答案的模型（RL w/o think，68.39）反直觉地优于保留思考过程的模型（RL w/ think，66.49），原因在于冷启动粗粒度数据集中的噪声容易引发错误推理，且额外思考内容分散了模型对 OV-MER 核心任务的注意力。",
+    },  #[cite: 107, 109, 110]
+    {
+        "question": "AffectGPT-RL 的单奖励与多奖励强化学习消融实验（Figure 3）分别得出了什么结论？为什么同时使用全部五种奖励反而会导致性能大幅下降？",
+        "ground_truth": "在单奖励 RL 中，直接优化 EW 指标的准确率奖励（63.35）和双重奖励（64.98）显著优于无 RL 基线（62.52）；而格式奖励（59.22）、对齐奖励（57.55）和感知奖励（59.93）均导致性能下降，原因是格式与对齐已在冷启动阶段充分学会，而感知奖励受限于当前 MLLM 解码人类情感偏好的噪声。在多奖励 RL 中，准确率+格式（AF）达到最佳（66.49），继续叠加更多奖励（AFL 65.38、AFLD 64.66、AFLDP 60.99）反而持续退化，这是因为多目标之间存在干扰，优化多个目标会稀释核心奖励的有效性。",
+    },  #[cite: 108, 109]
+    {
+        "question": "AffectGPT-RL 在 MER-UniBench 跨任务泛化实验（Table 3）中的表现呈现出怎样的分化？作者如何解释其在情感极性分析（Sentiment Analysis）任务上的性能微降？",
+        "ground_truth": "在音视频文本全模态下，AffectGPT-RL 的 MER-UniBench 平均分从 AffectGPT 的 74.77 提升至 79.48（达到 SOTA），在细粒度情感识别（OV-MERD+ 从 62.52 升至 68.05）和基础情感识别（如 MER2024 从 78.54 跃升至 93.75、IEMOCAP 从 60.54 升至 74.26）上均取得大幅提升，但在情感极性分析的四个数据集上出现小幅下降（如 MOSI 81.30→79.39、MOSEI 80.90→79.24）。作者归因于两点：一是 RL 模型倾向于过度生成细粒度情感词，即便只需简单正负判断时也是如此；二是 OV-MER 聚焦离散情感词识别，与基础和细粒度任务高度契合，但与二元情感极性判断的目标存在差异。",
+    },  #[cite: 110]
+
+    # ==================== 复杂问题：跨论文综合对比 (5条) ====================
+    {
+        "question": "梳理 AffectGPT、EmoPrefer 与 AffectGPT-RL 这三篇系列工作在数据集、评估范式与奖励设计上的继承与演进关系。",
+        "ground_truth": "三篇论文构成了连贯的技术演进链条：（1）AffectGPT 奠定了数据、模型与评测基础，构建了 MER-Caption+（31K）训练集、OV-MERD+ 测试集和 MER-UniBench 统一基准，并引入基于 5 个情感轮（EW）的集合级 F_S 指标；（2）EmoPrefer 针对自由文本情感描述难以评估的痛点，从 MER-Caption+ 和 MERR-Fine 的重叠视频中构建了 EmoPrefer-Data 偏好数据集，验证了 Qwen2.5-Omni 作为最优 MLLM 裁判的能力，并提出结合 Bradley-Terry 算法进行模型排序；（3）AffectGPT-RL 直接复用 MER-Caption+ 进行冷启动训练、在 OV-MERD+ 和 MER-UniBench 上评测，通过 GRPO 强化学习直接优化不可微的 EW 指标，并在感知奖励中直接引入了 EmoPrefer 提出的 Qwen2.5-Omni + Bradley-Terry 排序机制（同时实证指出了 MLLM 偏好噪声对该奖励的负面影响）。",
+    },  #[cite: 39, 42, 61, 65, 67, 107, 108, 122]
+    {
+        "question": "对比 CmIR 与 AffectGPT 在多模态情感分析（如 CMU-MOSI、CMU-MOSEI、CH-SIMS v2）上的技术路线、特征表示方式、融合机制以及评测指标有何核心差异？",
+        "ground_truth": "两者代表了判别/回归式与生成式 MLLM 两条不同路线：在特征与模型方面，CmIR 使用预提取特征（DeBERTa/BERT、COVAREP/OpenSmile、Facet/OpenFace），经单模态网络后通过编码器解耦为因果不变表示 Z^{inv} 与虚假表示 Z^{spu}，再拼接 Z^{inv} 送入 MLP 预测器直接输出情感值或类别；AffectGPT 则采用端到端 MLLM 架构（CLIP ViT-L + HuBERT-L + Qwen2.5），在 LLM 外部通过 Q-Former 或 Attention 进行预融合，生成自然语言情感描述后再用提示词提取情感极性。在评测指标上，CmIR 侧重传统的连续/离散指标（Acc7/Acc5、Acc2、F1、MAE、Corr），在 MOSI/MOSEI/CH-SIMS-v2 上 Acc2 分别达 89.6%、87.8%、81.9%；AffectGPT 在 MER-UniBench 中以加权平均 F1（WAF）为主指标，在这三个数据集上分别取得 81.30、80.90 和 86.18。",
+    },  #[cite: 41, 43, 50, 52, 84, 87, 97, 98]
+    {
+        "question": "综合 AffectGPT 与 AffectGPT-RL 两篇论文，对比 MER-Caption+、MER2025-OV 和 OV-MERD+ 三个数据集的标注方式与规模差异，并说明为何 AffectGPT-RL 在两阶段训练中分别选用前两者。",
+        "ground_truth": "MER-Caption+（31,327 样本）采用“模型主导、人工辅助”的自动生成与两级过滤流程，规模大且同时包含长文本情感描述与开放词汇标签，但未经逐条人工核验；MER2025-OV（去重后 1,000 样本）采用纯人工两轮专家标注（首轮合并保证完整性、次轮至少两人共识保证准确性），仅提供极高质量的开放词汇标签；OV-MERD+（532 样本）同样为全人工标注的开放词汇测试集。AffectGPT-RL 在冷启动阶段需要大规模带描述数据来建立基础情感理解和输出格式对齐，因此选用 MER-Caption+；而在强化学习阶段，奖励计算只需准确的情感标签而无需人工编写的思考过程，因此选用小规模但标注精度极高的 MER2025-OV。",
+    },  #[cite: 39, 40, 55, 107, 108, 123, 124]
+    {
+        "question": "对比 CmIR 与 AffectGPT-RL 各自针对传统监督学习在情感计算中发现的核心瓶颈，以及两者分别借助什么理论或算法范式突破了该瓶颈？",
+        "ground_truth": "CmIR 指出传统监督学习在多模态情感计算中容易拟合环境特定的虚假相关性（如把说话人习惯性微笑误判为正向情感），导致在分布偏移（OOD）和模态噪声下泛化崩塌；它借助因果推断与信息论，通过不变性、正交互信息与重构三项约束解耦出环境无关的因果不变表示，并在理论上证明其最坏情况 OOD 风险严格低于原始特征。AffectGPT-RL 则指出在开放词汇情感识别中，传统监督学习的 token 级交叉熵损失与语义情感轮（EW）评估指标不对齐，且 EW 指标本身不可微；它借助 GRPO 强化学习范式直接以 EW 指标作为可验证奖励函数，并辅以长度惩罚（P_2/P_3）抑制奖励黑客，实现了对不可微语义指标的直接优化。",
+    },  #[cite: 80, 81, 83, 85, 104, 105, 107, 110]
+    {
+        "question": "从序列建模与推理效率的底层架构视角，对比 Mamba 与 AffectGPT、EmoPrefer、AffectGPT-RL 所依赖的 Transformer 类 LLM 骨干（如 Qwen2.5、LLaMA）在上下文压缩与计算复杂度上的本质区别。",
+        "ground_truth": "AffectGPT、EmoPrefer 和 AffectGPT-RL 均以标准 Transformer 架构的 LLM（如 Qwen2.5、LLaMA 系列）为生成或裁判骨干，其核心自注意力机制显式保留整个上下文而不进行状态压缩，因此训练复杂度随序列长度呈二次方增长，自回归推理时必须维护随长度线性增长的 KV 缓存，导致单步推理耗时线性上升。相比之下，Mamba 完全摒弃了注意力和独立 MLP 模块，通过带选择机制的结构化状态空间模型（S6）将上下文动态压缩进固定大小的循环隐状态中，无需 KV 缓存，从而实现线性时间训练、常数时间单步推理、高出 4–5 倍的推理吞吐量，并支持高达百万（1M）长度的序列扩展。",
+    },  #[cite: 1, 2, 5, 15, 45, 50, 64]
+]
+
+
+for _item in EVAL_DATASET_SIMPLE:
+    _item.setdefault("question_type", "simple")
+
+for _item in EVAL_DATASET_COMPLEX:
+    _item.setdefault("question_type", "complex")
+
+EVAL_DATASET = EVAL_DATASET_SIMPLE + EVAL_DATASET_COMPLEX

@@ -4,6 +4,7 @@ import hashlib
 import math
 import base64
 import re
+from urllib.parse import quote
 
 import httpx
 import streamlit as st
@@ -151,8 +152,25 @@ def render_chunk_browser(api_base):
             if not documents:
                 st.info("暂无 PDF。可以在侧栏上传并索引，或切换到“本地 PDF 预览”。")
                 return
-            filename = st.selectbox("选择 PDF", [item["filename"] for item in documents])
-            document = next(item for item in documents if item["filename"] == filename)
+            doc_map = {item["filename"]: item for item in documents}
+
+            def _format_doc_option(name: str) -> str:
+                info = doc_map.get(name, {})
+                if "indexed_chunks" not in info:
+                    return name
+                cnt = info.get("indexed_chunks", 0)
+                if not info.get("on_disk", True):
+                    return f"{name} (⚠️ 文件缺失 · 残留索引 {cnt} 块)"
+                if cnt > 0:
+                    return f"{name} (🟢 已索引 · {cnt} 块)"
+                return f"{name} (🟠 未建立索引)"
+
+            filename = st.selectbox(
+                "选择 PDF",
+                [item["filename"] for item in documents],
+                format_func=_format_doc_option,
+            )
+            document = doc_map[filename]
             with st.spinner("正在读取分块…"):
                 result = _load_chunks(api_base, filename, document["revision"])
         else:
@@ -190,6 +208,68 @@ def render_chunk_browser(api_base):
         st.success("正文和表格为当前索引实际使用的块；图片及其 caption 仅供预览。")
     else:
         st.info("以下为分块预览，使用与入库相同的切分规则；尚未加入向量索引。")
+
+    if mode == "已上传的 PDF":
+        encoded_name = quote(result["filename"], safe="")
+        on_disk = document.get("on_disk", True)
+        if not result["indexed"]:
+            col_idx, col_del_file = st.columns(2)
+            if col_idx.button("⚡ 为该 PDF 建立索引", key="cb_build_single_index", type="primary", use_container_width=True):
+                with st.spinner(f"正在为 {result['filename']} 建立向量索引 …"):
+                    resp = httpx.post(f"{api_base}/documents/{encoded_name}/index", timeout=1900, trust_env=False)
+                if resp.status_code == 200:
+                    _load_chunks.clear()
+                    st.success(f"已完成索引：{result['filename']}（{resp.json().get('chunks', 0)} 块）")
+                    st.rerun()
+                else:
+                    st.error(f"建立索引失败：{resp.text}")
+            if col_del_file.button("🗑️ 删除该 PDF 文件", key="cb_delete_unindexed_file", use_container_width=True):
+                resp = httpx.delete(
+                    f"{api_base}/documents/{encoded_name}/index",
+                    params={"delete_file": "true"},
+                    timeout=60,
+                    trust_env=False,
+                )
+                if resp.status_code == 200:
+                    _load_chunks.clear()
+                    st.rerun()
+                else:
+                    st.error(f"删除失败：{resp.text}")
+        else:
+            col_reidx, col_del_idx, col_del_all = st.columns(3)
+            if on_disk and col_reidx.button("🔄 重新建立索引", key="cb_rebuild_single_index", use_container_width=True):
+                with st.spinner(f"正在重建 {result['filename']} 索引 …"):
+                    resp = httpx.post(f"{api_base}/documents/{encoded_name}/index", timeout=1900, trust_env=False)
+                if resp.status_code == 200:
+                    _load_chunks.clear()
+                    st.success(f"已重建索引：{result['filename']}（{resp.json().get('chunks', 0)} 块）")
+                    st.rerun()
+                else:
+                    st.error(f"重建索引失败：{resp.text}")
+            if col_del_idx.button("🧹 仅删除索引 (保留文件)", key="cb_delete_single_index", use_container_width=True):
+                resp = httpx.delete(
+                    f"{api_base}/documents/{encoded_name}/index",
+                    params={"delete_file": "false"},
+                    timeout=60,
+                    trust_env=False,
+                )
+                if resp.status_code == 200:
+                    _load_chunks.clear()
+                    st.rerun()
+                else:
+                    st.error(f"删除索引失败：{resp.text}")
+            if col_del_all.button("🗑️ 删除索引及文件", key="cb_delete_single_all", use_container_width=True):
+                resp = httpx.delete(
+                    f"{api_base}/documents/{encoded_name}/index",
+                    params={"delete_file": "true"},
+                    timeout=60,
+                    trust_env=False,
+                )
+                if resp.status_code == 200:
+                    _load_chunks.clear()
+                    st.rerun()
+                else:
+                    st.error(f"删除失败：{resp.text}")
     stats = st.columns(4)
     stats[0].metric("检索块数", result["total_chunks"])
     stats[1].metric("表格块数", sum(c.get('type')=='table' for c in result['chunks']))

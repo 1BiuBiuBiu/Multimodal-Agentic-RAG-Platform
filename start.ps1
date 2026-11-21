@@ -1,3 +1,7 @@
+param(
+    [switch]$NoBrowser
+)
+
 $ErrorActionPreference = "Stop"
 $env:PYTHONUTF8 = "1"
 Set-Location -LiteralPath $PSScriptRoot
@@ -17,8 +21,18 @@ try {
 } catch { }
 
 if (-not $venvWorks) {
-    $globalPy = "C:\Users\33983\AppData\Local\Programs\Python\Python312\python.exe"
-    if (Test-Path -LiteralPath $globalPy) {
+    $globalPy = $null
+    $pyCmd = Get-Command python -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($pyCmd -and $pyCmd.Source -and ($pyCmd.Source -ne $pythonPath) -and ($pyCmd.Source -notlike "*WindowsApps*")) {
+        $globalPy = $pyCmd.Source
+    }
+    if (-not $globalPy -or -not (Test-Path -LiteralPath $globalPy)) {
+        $fallbackPy = "C:\Users\33983\AppData\Local\Programs\Python\Python312\python.exe"
+        if (Test-Path -LiteralPath $fallbackPy) {
+            $globalPy = $fallbackPy
+        }
+    }
+    if ($globalPy) {
         $pythonPath = $globalPy
         $sitePackages = Join-Path $PSScriptRoot ".venv\Lib\site-packages"
         if ($env:PYTHONPATH) {
@@ -38,8 +52,18 @@ if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot ".env"))) {
 $runtimePath = Join-Path $PSScriptRoot ".runtime"
 New-Item -ItemType Directory -Path $runtimePath -Force | Out-Null
 
+function Test-HealthUrl {
+    param([string]$HealthUrl)
+    try {
+        $response = Invoke-WebRequest -Uri $HealthUrl -UseBasicParsing -TimeoutSec 2
+        return ($response.StatusCode -eq 200)
+    } catch {
+        return $false
+    }
+}
+
 function Start-ServiceProcess {
-    param([string]$Name, [int]$Port, [string[]]$Arguments, [string]$HealthUrl)
+    param([string]$Name, [int]$Port, [string[]]$Arguments, [string]$HealthUrl, [string]$ExpectedModule)
     $pidFile = Join-Path $runtimePath "$Name.pid"
     $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
     if ($listener) {
@@ -52,7 +76,15 @@ function Start-ServiceProcess {
                 return
             }
         }
-        throw "Port $Port is already occupied. No existing process was stopped."
+        foreach ($ownerPid in ($listener.OwningProcess | Select-Object -Unique)) {
+            $ownerProc = Get-CimInstance Win32_Process -Filter "ProcessId = $ownerPid" -ErrorAction SilentlyContinue
+            if ($ownerProc -and $ownerProc.Name -like "python*" -and $ownerProc.CommandLine -like "*$ExpectedModule*" -and (Test-HealthUrl -HealthUrl $HealthUrl)) {
+                Set-Content -LiteralPath $pidFile -Value $ownerPid
+                Write-Host "$Name is already running (PID $ownerPid): $HealthUrl"
+                return
+            }
+        }
+        throw "Port $Port is already occupied by another process. No existing process was stopped."
     }
     $stdoutPath = Join-Path $runtimePath "$Name.out.log"
     $stderrPath = Join-Path $runtimePath "$Name.err.log"
@@ -65,13 +97,10 @@ function Start-ServiceProcess {
             Get-Content -LiteralPath $stderrPath -Tail 30
             throw "$Name exited. See $stderrPath"
         }
-        try {
-            $response = Invoke-WebRequest -Uri $HealthUrl -UseBasicParsing -TimeoutSec 2
-            if ($response.StatusCode -eq 200) {
-                Write-Host "$Name started (PID $($serviceProcess.Id))."
-                return
-            }
-        } catch { }
+        if (Test-HealthUrl -HealthUrl $HealthUrl) {
+            Write-Host "$Name started (PID $($serviceProcess.Id))."
+            return
+        }
         Start-Sleep -Seconds 1
     }
     throw "$Name is still starting. Check $stderrPath"
@@ -79,10 +108,20 @@ function Start-ServiceProcess {
 
 Start-ServiceProcess -Name "api" -Port 8000 `
     -Arguments @("-m", "uvicorn", "app.api:app", "--host", "127.0.0.1", "--port", "8000") `
-    -HealthUrl "http://127.0.0.1:8000/health"
+    -HealthUrl "http://127.0.0.1:8000/health" `
+    -ExpectedModule "uvicorn app.api:app"
+
 Start-ServiceProcess -Name "ui" -Port 8501 `
     -Arguments @("-m", "streamlit", "run", "app/main.py", "--server.address", "127.0.0.1", "--server.port", "8501", "--server.headless", "true", "--browser.gatherUsageStats", "false") `
-    -HealthUrl "http://127.0.0.1:8501/_stcore/health"
-Write-Host "UI: http://127.0.0.1:8501"
+    -HealthUrl "http://127.0.0.1:8501/_stcore/health" `
+    -ExpectedModule "streamlit run app/main.py"
+
+$uiUrl = "http://127.0.0.1:8501"
+Write-Host "UI: $uiUrl"
 Write-Host "API docs: http://127.0.0.1:8000/docs"
 Write-Host "Stop: powershell -ExecutionPolicy Bypass -File .\stop.ps1"
+
+if (-not $NoBrowser) {
+    Write-Host "Opening UI in default browser: $uiUrl"
+    Start-Process $uiUrl
+}

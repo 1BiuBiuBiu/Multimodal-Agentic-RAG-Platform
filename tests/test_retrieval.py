@@ -22,14 +22,14 @@ def snapshot():
 
 
 class RetrievalTests(unittest.TestCase):
-    def test_english_multi_query_and_single_late_rerank_preserve_duplicate_text_sources(self):
-        model=FakeListChatModel(responses=['What is AffectGPT?',
-            '1. What architecture does AffectGPT use?\n2. Which dataset trains AffectGPT?\n3. How is AffectGPT evaluated?'])
+    def test_english_multi_query_merges_translation_and_preserves_duplicate_text_sources(self):
+        model=FakeListChatModel(responses=[
+            '### What architecture does AffectGPT use?\n### Which dataset trains AffectGPT?\n### How is AffectGPT evaluated?'
+        ])
         with patch.object(retrieval,'search_candidates',return_value=[0,1,2]) as search, patch.object(retrieval,'rerank_indices',return_value=[2,0,1]) as rerank:
             result=retrieve_documents('介绍 AffectGPT',PipelineConfig(top_k=3),llm=model,snapshot=snapshot())
-        self.assertEqual(search.call_count,4)
-        self.assertEqual(rerank.call_count,1)
-        self.assertEqual(rerank.call_args.args[0],'What is AffectGPT?')
+        self.assertEqual(search.call_count,3)
+        self.assertEqual(rerank.call_count,3)
         self.assertEqual(len(result['sources']),3)
         self.assertEqual(len({c['chunk_id'] for c in result['sources']}),3)
         self.assertTrue(all(not any('\u4e00'<=ch<='\u9fff' for ch in q) for q in result['queries']))
@@ -37,9 +37,9 @@ class RetrievalTests(unittest.TestCase):
     def test_model_can_choose_no_decomposition_or_any_number_of_subqueries(self):
         original='What is AffectGPT?'
         for output,expected_count in [
-            (original,1),
-            ('Architecture of AffectGPT?\nTraining data of AffectGPT?',3),
-            ('\n'.join(f'AffectGPT subquestion {i}?' for i in range(7)),8),
+            ('End | What is AffectGPT?',1),
+            ('### Architecture of AffectGPT?\n### Training data of AffectGPT?',2),
+            ('\n'.join(f'### AffectGPT subquestion {i}?' for i in range(7)),7),
         ]:
             with self.subTest(expected_count=expected_count):
                 model=FakeListChatModel(responses=[output])
@@ -47,14 +47,13 @@ class RetrievalTests(unittest.TestCase):
                     result=retrieve_documents(original,PipelineConfig(rerank=False),llm=model,snapshot=snapshot())
                 self.assertEqual(search.call_count,expected_count)
                 self.assertEqual(len(result['queries']),expected_count)
-                self.assertEqual(result['queries'].count(original),1)
 
     def test_query_cleanup_removes_duplicates_without_padding(self):
         original='What is AffectGPT?'
-        model=FakeListChatModel(responses=[original+'\n1. Training data for AffectGPT?\n2. Training data for AffectGPT?'])
+        model=FakeListChatModel(responses=['### Training data for AffectGPT?\n### Training data for AffectGPT?\n### Evaluation of AffectGPT?'])
         with patch.object(retrieval,'search_candidates',return_value=[0]):
             result=retrieve_documents(original,PipelineConfig(rerank=False),llm=model,snapshot=snapshot())
-        self.assertEqual(result['queries'],['Training data for AffectGPT?',original])
+        self.assertEqual(result['queries'],['Training data for AffectGPT?','Evaluation of AffectGPT?'])
 
     def test_legacy_fixed_count_is_removed_from_saved_configuration(self):
         config=PipelineConfig.model_validate({'num_queries':2,'multi_query':True})
@@ -77,10 +76,12 @@ class RetrievalTests(unittest.TestCase):
         self.assertEqual(result['queries'],['中文问题'])
         self.assertEqual(search.call_args.args[0],'中文问题')
 
-    def test_non_english_expansion_is_rejected_when_translation_enabled(self):
-        model=FakeListChatModel(responses=['English question?', '中文扩展'])
-        with self.assertRaisesRegex(ValueError,'非英文'):
-            retrieve_documents('中文问题',llm=model,snapshot=snapshot())
+    def test_non_english_expansion_is_skipped_when_translation_enabled(self):
+        model=FakeListChatModel(responses=['### English question?\n### 中文扩展'])
+        with patch.object(retrieval,'search_candidates',return_value=[0]) as search, patch.object(retrieval,'rerank_indices',return_value=[0]):
+            result=retrieve_documents('中文问题',llm=model,snapshot=snapshot())
+        self.assertEqual(result['queries'],['English question?'])
+        self.assertEqual(search.call_count,1)
 
     def test_shared_translation_is_computed_once_under_concurrency(self):
         cache=TranslationCache()
@@ -120,6 +121,57 @@ class RetrievalTests(unittest.TestCase):
             PipelineConfig(dense=False,bm25=False)
         with self.assertRaises(ValidationError):
             PipelineConfig(top_k=10,candidate_k=5)
+
+    def test_merged_grade_documents_filters_irrelevant_and_plans_gap_for_multi_query(self):
+        model=Mock()
+        model.invoke.return_value=SimpleNamespace(content=(
+            'IRRELEVANT_CHUNK_IDS: p.pdf::2\n'
+            'DECISION: INSUFFICIENT\n'
+            'GAP: missing evaluation table details in Table 11\n'
+            'TARGETED_SUB_QUERIES:\n'
+            '### Table 11 evaluation details'
+        ))
+        state=agent._initial_state('What is AffectGPT performance?')
+        state['context']=[
+            {'text':'Relevant overview','source':'p.pdf','page':1,'section':'1. Intro','chunk_id':'p.pdf::1','type':'text'},
+            {'text':'Unrelated bibliography','source':'p.pdf','page':9,'section':'References','chunk_id':'p.pdf::2','type':'text'},
+        ]
+        state['query_doc_history']=[{
+            'cycle':1,'cycle_name':'首轮多模态初检','input_query':'What is AffectGPT performance?',
+            'sub_groups':[],'new_docs':state['context'],
+        }]
+        with patch.object(agent,'llm',model):
+            graded=agent.grade_documents(state)
+            rewritten=agent.rewrite_query(graded)
+        self.assertEqual(model.invoke.call_count,1)
+        self.assertEqual(graded['_grade'],'rewrite')
+        self.assertEqual([c['chunk_id'] for c in graded['context']],['p.pdf::1'])
+        self.assertIn('p.pdf::2',graded['rejected_chunk_ids'])
+        self.assertIn('p.pdf::1',graded['accepted_chunk_ids'])
+        self.assertEqual(rewritten['query'],'Table 11 evaluation details')
+        self.assertEqual(rewritten['targeted_sub_queries'],['Table 11 evaluation details'])
+        self.assertEqual(rewritten['rewrite_count'],1)
+
+    def test_generate_prompt_includes_section_and_table_image_verification(self):
+        model=Mock()
+        model.stream.return_value=iter([AIMessageChunk(content='答案 [p.pdf, #p.pdf::5]')])
+        state=agent._initial_state('Compare table results')
+        state['context']=[
+            {'text':'| Model | Acc |\n| A | 90 |','source':'p.pdf','page':3,'section':'4.2 Results','chunk_id':'p.pdf::5','type':'table'}
+        ]
+        with patch.object(agent,'llm',model), patch.object(agent,'get_stream_writer',return_value=lambda *_:None), patch.object(agent,'_extract_context_images',return_value=[{
+            'data_uri':'data:image/jpeg;base64,AAAA','mime':'image/jpeg','caption':'Table 1',
+            'source':'p.pdf','page':3,'section':'4.2 Results','chunk_id':'p.pdf::5','type':'table'
+        }]):
+            out=agent.generate(state)
+        sent_parts=model.stream.call_args.args[0][0].content
+        text_payload='\n'.join(p['text'] for p in sent_parts if p.get('type')=='text')
+        self.assertIn('[p.pdf, #p.pdf::5]',text_payload)
+        self.assertNotIn('Section: 4.2 Results',text_payload)
+        self.assertIn('cross-check the parsed table text against the attached table image',text_payload)
+        self.assertIn('Attached Table Image for [p.pdf, #p.pdf::5]',text_payload)
+        self.assertIn('[文件名.pdf, #chunk_id]',text_payload)
+        self.assertEqual(out['answer'],'答案 [p.pdf, #p.pdf::5]')
 
 
 if __name__=='__main__':

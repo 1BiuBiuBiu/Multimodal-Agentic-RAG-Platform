@@ -12,7 +12,7 @@ from loguru import logger
 
 from ingestion.ingest import CHUNK_OVERLAP, CHUNK_SIZE, load_pdf_chunks
 from ingestion.mineru_parser import MinerUError, MinerUUnavailable, read_cached_pdf
-from vectorstore.store import META_PATH
+from vectorstore.store import META_PATH, index_single_document, remove_document_from_index
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 DATA_DIR = Path("data")
@@ -110,12 +110,30 @@ def list_documents():
     _, metas, revision = _stored_chunks()
     counts = Counter(meta["source"] for meta in metas)
     files = sorted(DATA_DIR.iterdir(), key=lambda path: path.name.casefold()) if DATA_DIR.exists() else []
-    return {"documents": [
-        {"filename": path.name, "size_bytes": path.stat().st_size,
-         "indexed_chunks": counts[path.name], "revision": f"{path.stat().st_mtime_ns}:{revision}"}
+    docs = [
+        {
+            "filename": path.name,
+            "size_bytes": path.stat().st_size,
+            "indexed_chunks": counts[path.name],
+            "indexed": counts[path.name] > 0,
+            "on_disk": True,
+            "revision": f"{path.stat().st_mtime_ns}:{revision}",
+        }
         for path in files
         if path.is_file() and path.suffix.lower() == ".pdf" and path.resolve().parent == DATA_DIR.resolve()
-    ]}
+    ]
+    disk_names = {doc["filename"] for doc in docs}
+    for name in sorted(counts.keys(), key=str.casefold):
+        if name not in disk_names and counts[name] > 0:
+            docs.append({
+                "filename": name,
+                "size_bytes": 0,
+                "indexed_chunks": counts[name],
+                "indexed": True,
+                "on_disk": False,
+                "revision": f"0:{revision}",
+            })
+    return {"documents": docs}
 
 
 @router.get("/chunks")
@@ -123,13 +141,14 @@ def document_chunks(filename: str):
     path = DATA_DIR / _pdf_name(filename)
     if path.resolve().parent != DATA_DIR.resolve():
         raise HTTPException(status_code=400, detail="无效的 PDF 路径。")
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="PDF 文件不存在，请刷新文档列表。")
     texts, metas, _ = _stored_chunks()
     selected = [(text, meta) for text, meta in zip(texts, metas) if meta["source"] == filename]
     if selected:
         selected_texts, selected_metas = zip(*selected)
-        return _chunk_response(filename, selected_texts, selected_metas, indexed=True, parsed=_preview_cache(path))
+        parsed = _preview_cache(path) if path.is_file() else None
+        return _chunk_response(filename, selected_texts, selected_metas, indexed=True, parsed=parsed)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="PDF 文件不存在，请刷新文档列表。")
     texts, metas = _parse_pdf(path)
     return _chunk_response(filename, texts, metas, indexed=False, parsed=_preview_cache(path))
 
@@ -142,3 +161,87 @@ def preview_pdf(file: UploadFile = File(...)):
         path.write_bytes(file.file.read())
         texts, metas = _parse_pdf(path)
         return _chunk_response(filename, texts, metas, indexed=False, parsed=_preview_cache(path))
+
+
+@router.post("/upload")
+async def upload_document(file: UploadFile = File(...), build_index_now: bool = False):
+    filename = _pdf_name(Path(file.filename or "").name)
+    DATA_DIR.mkdir(exist_ok=True)
+    dest = DATA_DIR / filename
+    if dest.resolve().parent != DATA_DIR.resolve():
+        raise HTTPException(status_code=400, detail="无效的 PDF 路径。")
+    dest.write_bytes(await file.read())
+    if build_index_now:
+        chunks, metas = _parse_pdf(dest)
+        stats = index_single_document(filename, chunks, metas)
+        return {
+            "status": "indexed",
+            "filename": filename,
+            "chunks": stats["doc_chunks"],
+            "total_chunks": stats["total_chunks"],
+        }
+    return {"status": "uploaded", "filename": filename, "chunks": 0}
+
+
+@router.post("/index-unindexed")
+def index_unindexed_documents():
+    DATA_DIR.mkdir(exist_ok=True)
+    _, metas, _ = _stored_chunks()
+    counts = Counter(meta["source"] for meta in metas)
+    files = sorted(DATA_DIR.iterdir(), key=lambda path: path.name.casefold()) if DATA_DIR.exists() else []
+    targets = [
+        path for path in files
+        if path.is_file() and path.suffix.lower() == ".pdf"
+        and path.resolve().parent == DATA_DIR.resolve()
+        and counts[path.name] == 0
+    ]
+    if not targets:
+        return {"status": "noop", "indexed_files": [], "total_chunks": len(metas)}
+    indexed_files = []
+    total_chunks = len(metas)
+    for path in targets:
+        chunks, doc_metas = _parse_pdf(path)
+        stats = index_single_document(path.name, chunks, doc_metas)
+        indexed_files.append({"filename": path.name, "chunks": stats["doc_chunks"]})
+        total_chunks = stats["total_chunks"]
+    return {"status": "indexed", "indexed_files": indexed_files, "total_chunks": total_chunks}
+
+
+@router.post("/{filename}/index")
+def index_document(filename: str):
+    name = _pdf_name(filename)
+    path = DATA_DIR / name
+    if path.resolve().parent != DATA_DIR.resolve():
+        raise HTTPException(status_code=400, detail="无效的 PDF 路径。")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="PDF 文件不存在，无法建立索引。")
+    chunks, metas = _parse_pdf(path)
+    stats = index_single_document(name, chunks, metas)
+    return {
+        "status": "indexed",
+        "filename": name,
+        "chunks": stats["doc_chunks"],
+        "total_chunks": stats["total_chunks"],
+    }
+
+
+@router.delete("/{filename}/index")
+def delete_document_index(filename: str, delete_file: bool = False):
+    name = _pdf_name(filename)
+    path = DATA_DIR / name
+    if path.resolve().parent != DATA_DIR.resolve():
+        raise HTTPException(status_code=400, detail="无效的 PDF 路径。")
+    stats = remove_document_from_index(name)
+    file_deleted = False
+    if delete_file and path.is_file():
+        path.unlink()
+        file_deleted = True
+    if stats["removed_chunks"] == 0 and not file_deleted and not path.is_file():
+        raise HTTPException(status_code=404, detail="未找到该 PDF 的索引或文件。")
+    return {
+        "status": "deleted_file_and_index" if file_deleted else "deleted_index",
+        "filename": name,
+        "removed_chunks": stats["removed_chunks"],
+        "total_chunks": stats["total_chunks"],
+        "file_deleted": file_deleted,
+    }

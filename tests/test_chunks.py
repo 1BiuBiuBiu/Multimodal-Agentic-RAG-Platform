@@ -184,6 +184,95 @@ class ChunkApiTests(unittest.TestCase):
         self.assertEqual(len(result['chunks'][0]['asset_images']),2)
         self.assertNotIn('artifact_dir',result['chunks'][0])
 
+    def _patch_store(self):
+        from vectorstore import store as vs
+        idx_dir = self.base / 'idx'
+        idx_dir.mkdir(exist_ok=True)
+        meta_file = idx_dir / 'metadata.pkl'
+        patches = [
+            patch.object(vs, 'STORE_DIR', idx_dir),
+            patch.object(vs, 'FAISS_PATH', idx_dir / 'faiss.index'),
+            patch.object(vs, 'FAISS_TEXT_PATH', idx_dir / 'faiss_text.index'),
+            patch.object(vs, 'BM25_PATH', idx_dir / 'bm25.pkl'),
+            patch.object(vs, 'META_PATH', meta_file),
+            patch.object(documents, 'META_PATH', meta_file),
+            patch.object(vs, 'embed_multimodal_chunks', side_effect=lambda chunks, metas, multimodal=True: [
+                [float(i + 1)] * vs.EMBED_DIM for i, _ in enumerate(chunks)
+            ]),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        return idx_dir
+
+    def test_index_single_unindexed_pdf_and_delete_index_preserving_or_removing_file(self):
+        idx_dir = self._patch_store()
+        create_pdf(self.data / 'other.pdf')
+
+        listing = {d['filename']: d for d in self.client.get('/documents').json()['documents']}
+        self.assertEqual(listing['sample.pdf']['indexed_chunks'], 0)
+        self.assertFalse(listing['sample.pdf']['indexed'])
+        self.assertEqual(listing['other.pdf']['indexed_chunks'], 0)
+
+        res1 = self.client.post('/documents/sample.pdf/index')
+        self.assertEqual(res1.status_code, 200)
+        self.assertGreater(res1.json()['chunks'], 0)
+
+        listing = {d['filename']: d for d in self.client.get('/documents').json()['documents']}
+        self.assertGreater(listing['sample.pdf']['indexed_chunks'], 0)
+        self.assertTrue(listing['sample.pdf']['indexed'])
+        self.assertEqual(listing['other.pdf']['indexed_chunks'], 0)
+
+        res2 = self.client.post('/documents/other.pdf/index')
+        self.assertEqual(res2.status_code, 200)
+        self.assertEqual(res2.json()['total_chunks'], res1.json()['chunks'] + res2.json()['chunks'])
+
+        del_idx = self.client.delete('/documents/sample.pdf/index')
+        self.assertEqual(del_idx.status_code, 200)
+        self.assertFalse(del_idx.json()['file_deleted'])
+        self.assertEqual(del_idx.json()['removed_chunks'], res1.json()['chunks'])
+        self.assertTrue((self.data / 'sample.pdf').is_file())
+
+        listing = {d['filename']: d for d in self.client.get('/documents').json()['documents']}
+        self.assertEqual(listing['sample.pdf']['indexed_chunks'], 0)
+        self.assertEqual(listing['other.pdf']['indexed_chunks'], res2.json()['chunks'])
+
+        del_file = self.client.delete('/documents/sample.pdf/index', params={'delete_file': 'true'})
+        self.assertEqual(del_file.status_code, 200)
+        self.assertTrue(del_file.json()['file_deleted'])
+        self.assertFalse((self.data / 'sample.pdf').exists())
+
+        del_last = self.client.delete('/documents/other.pdf/index')
+        self.assertEqual(del_last.status_code, 200)
+        self.assertEqual(del_last.json()['total_chunks'], 0)
+        self.assertFalse((idx_dir / 'faiss.index').exists())
+        self.assertFalse((idx_dir / 'metadata.pkl').exists())
+
+    def test_upload_without_indexing_and_batch_index_unindexed(self):
+        self._patch_store()
+        up = self.client.post(
+            '/documents/upload',
+            params={'build_index_now': 'false'},
+            files={'file': ('uploaded.pdf', (self.data / 'sample.pdf').read_bytes(), 'application/pdf')},
+        )
+        self.assertEqual(up.status_code, 200)
+        self.assertEqual(up.json()['status'], 'uploaded')
+        self.assertEqual(up.json()['chunks'], 0)
+        self.assertTrue((self.data / 'uploaded.pdf').is_file())
+
+        listing = {d['filename']: d for d in self.client.get('/documents').json()['documents']}
+        self.assertEqual(listing['uploaded.pdf']['indexed_chunks'], 0)
+        self.assertEqual(listing['sample.pdf']['indexed_chunks'], 0)
+
+        batch = self.client.post('/documents/index-unindexed')
+        self.assertEqual(batch.status_code, 200)
+        names = [item['filename'] for item in batch.json()['indexed_files']]
+        self.assertEqual(sorted(names), ['sample.pdf', 'uploaded.pdf'])
+
+        listing = {d['filename']: d for d in self.client.get('/documents').json()['documents']}
+        self.assertGreater(listing['sample.pdf']['indexed_chunks'], 0)
+        self.assertGreater(listing['uploaded.pdf']['indexed_chunks'], 0)
+
 
 class ChunkUiTests(unittest.TestCase):
     def setUp(self):
